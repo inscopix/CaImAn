@@ -42,7 +42,12 @@ import pickle as cpk
 from scipy.io import loadmat
 from matplotlib import animation
 import pylab as pl
-from skimage.external.tifffile import imread
+try:
+    import tifffile
+except ImportError:
+    from skimage.external import tifffile
+
+from tifffile import imread, TiffFile
 from tqdm import tqdm
 from . import timeseries
 
@@ -1210,18 +1215,21 @@ def load(file_name,fr=30,start_time=0,meta_data=None,subindices=None,shape=None,
         _, extension = os.path.splitext(file_name)[:2]
 
         if extension == '.tif' or extension == '.tiff':  # load avi file
-            if subindices is not None:
-                if type(subindices) is list:
-                    input_arr = imread(file_name)[
-                        subindices[0], subindices[1], subindices[2]]
-                elif type(subindices) is range:
-                    subidx = slice(subindices.start, subindices.stop,
-                                   subindices.step)
-                    input_arr = imread(file_name)[subidx]
+            with TiffFile(file_name) as tif:
+                if subindices is not None:
+                    input_arr = tif.asarray(key=subindices)
+#                    if type(subindices) is list:
+#                        input_arr = imread(file_name)[
+#                            subindices[0], subindices[1], subindices[2]]
+#                    elif type(subindices) is range:
+#                        subidx = slice(subindices.start, subindices.stop,
+#                                       subindices.step)
+#                        input_arr = imread(file_name)[subidx]
+#                    else:
+#                        input_arr = imread(file_name)[subindices]
                 else:
-                    input_arr = imread(file_name)[subindices]
-            else:
-                input_arr = imread(file_name)
+                    input_arr = tif.asarray()
+#                    input_arr = imread(file_name)
             input_arr = np.squeeze(input_arr)
 
         elif extension == '.avi':  # load avi file

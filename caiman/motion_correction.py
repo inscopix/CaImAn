@@ -1811,8 +1811,8 @@ def tile_and_correct(img, template, strides, overlaps, max_shifts, newoverlaps=N
 
     """
 
-    img = img.astype(np.float64).copy()
-    template = template.astype(np.float64).copy()
+    img = img.astype(np.float32).copy()
+    template = template.astype(np.float32).copy()
 
     if gSig_filt is not None:
 
@@ -2159,6 +2159,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
         corrected_slicer = slice(subidx.start, subidx.stop, subidx.step * 30)
         m = cm.load(fname, subindices=corrected_slicer)
 
+    m = m.astype(np.float32)
     if template is None:
         if gSig_filt is not None:
             m = cm.movie(
@@ -2166,7 +2167,7 @@ def motion_correct_batch_rigid(fname, max_shifts, dview=None, splits=56, num_spl
 
         template = cm.motion_correction.bin_median(
             m.motion_correct(max_shifts[0], max_shifts[1], template=None)[0])
-
+    
     new_templ = template
     if add_to_movie is None:
         add_to_movie = -np.min(template)
@@ -2362,14 +2363,17 @@ def tile_and_correct_wrapper(params):
 
     shift_info = []
     if extension == '.tif' or extension == '.tiff':  # check if tiff file
-        if is_fiji:
-            imgs = imread(img_name)[idxs]
-        else:
-            imgs = imread(img_name, key=idxs)
+        with tifffile.TiffFile(img_name) as tif:
+            imgs = tif.asarray(key=idxs)
+#        if is_fiji:
+#            imgs = imread(img_name)[idxs]
+#        else:
+#            imgs = imread(img_name, key=idxs)
     elif extension == '.sbx':  # check if sbx file
         imgs = cm.base.movies.sbxread(name, idxs[0], len(idxs))
     elif extension == '.sima' or extension == '.hdf5' or extension == '.h5':
         imgs = cm.load(img_name, subindices=list(idxs))
+    imgs = imgs.astype(np.float32)
     mc = np.zeros(imgs.shape, dtype=np.float32)
     for count, img in enumerate(imgs):
         if count % 10 == 0:

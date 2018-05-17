@@ -101,9 +101,9 @@ if fname[0] in ['Sue_2x_3000_40_-46.tif', 'demoMovieJ.tif']:
 # playing the movie using opencv. It requires loading the movie in memory. To
 # close the video press q
 
-m_orig = cm.load_movie_chain(fname[:1])
+m_orig = cm.load_movie_chain(fname[:1]).astype(np.float32)
 downsample_ratio = 0.2
-offset_mov = -np.min(m_orig[:100])
+offset_mov = -np.min(m_orig[:100].astype(np.float32))
 moviehandle = m_orig.resize(1, 1, downsample_ratio)
 if display_images:
     moviehandle.play(gain=10, offset=offset_mov, fr=30, magnification=2)
@@ -118,7 +118,7 @@ c, dview, n_processes = cm.cluster.setup_cluster(
 min_mov = cm.load(fname[0], subindices=range(200)).min()
 # this will be subtracted from the movie to make it non-negative
 
-mc = MotionCorrect(fname[0], min_mov,
+mc = MotionCorrect(fname[0], min_mov.astype(np.float32),
                    dview=dview, max_shifts=max_shifts, niter_rig=niter_rig,
                    splits_rig=splits_rig,
                    strides=strides, overlaps=overlaps, splits_els=splits_els,
