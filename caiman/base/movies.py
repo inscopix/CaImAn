@@ -1217,9 +1217,6 @@ def load(file_name,fr=30,start_time=0,meta_data=None,subindices=None,shape=None,
         if extension == '.tif' or extension == '.tiff':  # load avi file
             with TiffFile(file_name) as tif:
                 if subindices is not None:
-                    if type(subindices) is range:
-                        subindices = slice(subindices.start, subindices.stop,
-                                           subindices.step).copy()
                     input_arr = tif.asarray(key=subindices)
 #                    if type(subindices) is list:
 #                        input_arr = imread(file_name)[
