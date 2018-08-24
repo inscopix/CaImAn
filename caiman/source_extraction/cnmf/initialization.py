@@ -36,7 +36,7 @@ import sys
 import caiman
 from caiman.source_extraction.cnmf.deconvolution import constrained_foopsi
 from caiman.source_extraction.cnmf.pre_processing import get_noise_fft, get_noise_welch
-from caiman.source_extraction.cnmf.spatial import circular_constraint, connectivity_constraint
+from caiman.source_extraction.cnmf.spatial import circular_constraint, connectivity_constraint, centroid
 
 try:
     cv2.setNumThreads(0)
@@ -976,7 +976,7 @@ def greedyROI_corr(Y, Y_ds, max_number=None, gSiz=None, gSig=None, center_psf=Tr
                    min_corr=None, min_pnr=None, seed_method='auto',
                    min_pixel=3, bd=0, thresh_init=2, ring_size_factor=None, nb=1, options=None,
                    sn=None, save_video=False, video_name='initialization.mp4', ssub=1,
-                   ssub_B=2, init_iter=2):
+                   ssub_B=2, init_iter=2, Apre=None):
     """
     initialize neurons based on pixels' local correlations and peak-to-noise ratios.
 
@@ -1012,6 +1012,8 @@ def greedyROI_corr(Y, Y_ds, max_number=None, gSiz=None, gSig=None, center_psf=Tr
             downsampling factor for 1-photon imaging background computation
         init_iter: int, optional
             number of iterations for 1-photon imaging initialization
+        Apre: A pre-initialized set of footprints. The initialization will be run on the residual movie that has the
+            spatio-temporal activity of the footprints subtracted out. The shape should be (num_neurons, d1, d2).
 
     Returns:
 
@@ -1031,7 +1033,8 @@ def greedyROI_corr(Y, Y_ds, max_number=None, gSiz=None, gSig=None, center_psf=Tr
         min_pnr=min_pnr * np.sqrt(np.size(Y) / np.size(Y_ds)),
         seed_method=seed_method, deconvolve_options=o,
         min_pixel=min_pixel, bd=bd, thresh_init=thresh_init,
-        swap_dim=True, save_video=save_video, video_name=video_name)
+        swap_dim=True, save_video=save_video, video_name=video_name,
+        Apre=Apre)
 
 #    import caiman as cm
 #    cn_raw = cm.summary_images.local_correlations_fft(data.transpose([2,0,1]), swap_dim=False)
@@ -1208,7 +1211,8 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
                           seed_method='auto', deconvolve_options=None,
                           min_pixel=3, bd=1, thresh_init=2, swap_dim=True,
                           save_video=False, video_name='initialization.mp4',
-                          background_filter='disk'):
+                          background_filter='disk',
+                          Apre=None):
     """
     using greedy method to initialize neurons by selecting pixels with large
     local correlation and large peak-to-noise ratio
@@ -1250,6 +1254,8 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
             save the initialization procedure if it's True
         video_name: str
             name of the video to be saved.
+        Apre: A pre-initialized set of footprints. The initialization will be run on the residual movie that has the
+            spatio-temporal activity of the footprints subtracted out. The shape should be (num_neurons, d1, d2).
 
     Returns:
         A: np.ndarray (d1*d2*T)
@@ -1272,6 +1278,18 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
         data_raw = data
 
     data_filtered = data_raw.copy()
+
+    print('data_raw.shape=',data_raw.shape)
+
+    if Apre is not None:
+        assert Apre.shape[1:] == (d1, d2), "Bad shape for Apre: {}. Expected (num_neurons, {},{})".format(str(Apre.shape), d1, d2)
+
+        # zero out the movie data in neuron locations so they are not detected again
+        for k in range(Apre.shape[0]):
+            ai = Apre[k, :, :]
+            nz = np.where(ai > ai.max())
+            data_filtered[:, nz[0], nz[1]] = 0.
+
     if gSig:
         # spatially filter data
         if not isinstance(gSig, list):
@@ -1338,6 +1356,12 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
     if not max_number:
         # maximum number of neurons
         max_number = np.int32((ind_search.size - ind_search.sum()) / 5)
+
+    # if neurons have been pre-initialized, adjust some values to compensate
+    if Apre is not None:
+        nn = Apre.shape[0]
+        max_number += nn
+
     Ain = np.zeros(shape=(max_number, d1, d2),
                    dtype=np.float32)  # neuron shapes
     Cin = np.zeros(shape=(max_number, total_frames),
@@ -1348,7 +1372,29 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
                        dtype=np.float32)  # raw traces
     center = np.zeros(shape=(2, max_number))  # neuron centers
 
-    num_neurons = 0  # number of initialized neurons
+    num_neurons = 0
+    if Apre is not None:
+        # pre-initialize the existing footprints
+        nn = Apre.shape[0]
+        num_neurons += nn
+        Ain = np.zeros([max_number, d1, d2], dtype='float32')
+        for k in range(nn):
+            Ain[k, :, :] = Apre[k, :, :].astype('float32')
+
+        # compute the centroids of the existing footprints
+        for k in range(nn):
+            center[:, k] = centroid(Ain[k, :, :])
+
+        # estimate the raw calcium trace for existing footprints
+        for k in range(nn):
+            ai, ci_raw, ind_success, box_coords = box_and_extract(data_raw, data_filtered,
+                                                                  center[0, k], center[1, k], gSiz)
+            Cin[k, :] = ci_raw.squeeze()
+
+        # compute the denoised trace and deconvolved events for existing footprints
+        for k in range(nn):
+            ci, baseline, c1, _, _, si, _ = constrained_foopsi(Cin[k, :], **deconvolve_options)
+
     continue_searching = max_number > 0
     min_v_search = min_corr * min_pnr
     [ii, jj] = np.meshgrid(range(d2), range(d1))
@@ -1438,20 +1484,8 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
             #     continue
 
             # crop a small box for estimation of ai and ci
-            r_min = max(0, r - gSiz)
-            r_max = min(d1, r + gSiz + 1)
-            c_min = max(0, c - gSiz)
-            c_max = min(d2, c + gSiz + 1)
-            nr = r_max - r_min
-            nc = c_max - c_min
-            patch_dims = (nr, nc)  # patch dimension
-            data_raw_box = \
-                data_raw[:, r_min:r_max, c_min:c_max].reshape(-1, nr * nc)
-            data_filtered_box = \
-                data_filtered[:, r_min:r_max, c_min:c_max].reshape(-1, nr * nc)
-            # index of the seed pixel in the cropped box
-            ind_ctr = np.ravel_multi_index((r - r_min, c - c_min),
-                                           dims=(nr, nc))
+            ai, ci_raw, ind_success, box_coords = box_and_extract(data_raw, data_filtered, c, r, gSiz)
+            r_min, r_max, c_min, c_max = box_coords
 
             # neighbouring pixels to update after initializing one neuron
             r2_min = max(0, r - 2 * gSiz)
@@ -1477,16 +1511,13 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
 
                 writer.grab_frame()
 
-            [ai, ci_raw, ind_success] = extract_ac(data_filtered_box,
-                                                   data_raw_box, ind_ctr, patch_dims)
-
             if (np.sum(ai > 0) < min_pixel) or (not ind_success):
                 # bad initialization. discard and continue
                 continue
             else:
                 # cheers! good initialization.
                 center[:, num_neurons] = [c, r]
-                Ain[num_neurons, r_min:r_max, c_min:c_max] = ai
+                Ain[num_neurons, :, :] = ai
                 Cin_raw[num_neurons] = ci_raw.squeeze()
                 if deconvolve_options['p']:
                     # deconvolution
@@ -1520,13 +1551,13 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
                     writer.grab_frame()
 
                 # avoid searching nearby pixels
-                ind_search[r_min:r_max, c_min:c_max] += (ai > ai.max() / 2)
+                ind_search[r_min:r_max, c_min:c_max] += (ai[r_min:r_max, c_min:c_max] > ai.max() / 2)
 
                 # remove the spatial-temporal activity of the initialized
                 # and update correlation image & PNR image
                 # update the raw data
                 data_raw[:, r_min:r_max, c_min:c_max] -= \
-                    ai[np.newaxis, ...] * ci[..., np.newaxis, np.newaxis]
+                    ai[np.newaxis, r_min:r_max, c_min:c_max] * ci[..., np.newaxis, np.newaxis]
 
                 if gSig:
                     # spatially filter the neuron shape
@@ -1543,7 +1574,7 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
                                                        sigmaY=gSig[1], borderType=1)
                     # update the filtered data
                     data_filtered[:, r2_min:r2_max, c2_min:c2_max] -= \
-                        ai_filtered[np.newaxis, ...] * ci[..., np.newaxis, np.newaxis]
+                        ai_filtered[np.newaxis, r_min:r_max, c_min:c_max] * ci[..., np.newaxis, np.newaxis]
                     data_filtered_box = data_filtered[:, r2_min:r2_max, c2_min:c2_max].copy()
                 else:
                     data_filtered_box = data_raw[:, r2_min:r2_max, c2_min:c2_max].copy()
@@ -1595,6 +1626,56 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
         writer.finish()
 
     return A, C, C_raw, S, center
+
+
+def box_and_extract(data_raw, data_filtered, center_x, center_y, gSiz, embed_footprint=True):
+    """ Build a box around a seed pixel and then call extract_ac to get an estimate of the footprint and trace.
+
+    Args:
+        data_raw: The raw movie, shape (T, d1, d2)
+        data_filtered: The filtered movie, shape (T, d1, d2)
+        center_x: The seed pixel column.
+        center_y: The seed pixel row.
+        gSiz: The cell size.
+        embed_footprint: If True, embed the footprint in an image that is the shape of data_raw
+
+    Returns: ai, ci_raw, ind_success, box_coords
+
+    """
+
+    T, d1, d2 = data_raw.shape
+
+    r_min = max(0, center_y - gSiz)
+    r_max = min(d1, center_y + gSiz + 1)
+    c_min = max(0, center_x - gSiz)
+    c_max = min(d2, center_x + gSiz + 1)
+
+    nr = r_max - r_min
+    nc = c_max - c_min
+
+    patch_dims = (nr, nc)  # patch dimension
+
+    print('center=({}, {}), r_min={}, r_max={}, c_min={}, c_max={}, nr={}, nc={}'.format(center_x, center_y,
+                                                                                         r_min, r_max, c_min, c_max,
+                                                                                         nr, nc))
+    data_raw_box = \
+        data_raw[:, r_min:r_max, c_min:c_max].reshape(-1, nr * nc)
+    data_filtered_box = \
+        data_filtered[:, r_min:r_max, c_min:c_max].reshape(-1, nr * nc)
+
+    # index of the seed pixel in the cropped box
+    ind_ctr = np.ravel_multi_index((center_y - r_min, center_x - c_min),
+                                   dims=(nr, nc))
+
+    [ai, ci_raw, ind_success] = extract_ac(data_filtered_box,
+                                           data_raw_box, ind_ctr, patch_dims)
+
+    if embed_footprint:
+        ai_large = np.zeros([d1, d2])
+        ai_large[r_min:r_max, c_min:c_max] = ai
+        ai = ai_large
+
+    return ai, ci_raw, ind_success, (r_min, r_max, c_min, c_max)
 
 
 def extract_ac(data_filtered, data_raw, ind_ctr, patch_dims):

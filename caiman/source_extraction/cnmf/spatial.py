@@ -387,8 +387,9 @@ def regression_ipyparallel(pars):
                 a = nnls_L0(c.T, y, 1.2 * sn)
 
             elif method_least_square == 'lasso_lars':  # lasso lars function from scikit learn
-                lambda_lasso = 0 if np.size(cct_) == 0 else \
-                    .5 * noise_sn[px] * np.sqrt(np.max(cct_)) / T
+                # lambda_lasso = 0 if np.size(cct_) == 0 else \
+                #     .5 * noise_sn[px] * np.sqrt(np.max(cct_)) / T
+                lambda_lasso = 1e-8
                 clf = linear_model.LassoLars(alpha=lambda_lasso, positive=True)
                 a_lrs = clf.fit(np.array(c.T), np.ravel(y))
                 a = a_lrs.coef_
@@ -1211,3 +1212,22 @@ def connectivity_constraint(img_original, thr=.01, sz=5):
 #                A[px,idx_C[px]]=a
 #            else:
 #                A[px,idx_C[px]]=a.T
+
+
+def centroid(img):
+    """ Compute the centroid of a footprint.
+
+    Args:
+        img: A footprint of shape (nrows, ncols)
+
+    Returns: (x, y) the column and row of the centroid.
+    """
+
+    p = img.copy()
+    p[p < 0] = 0
+    p /= img.sum()
+    X, Y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
+    center_x = min(max(0, int(np.sum(p * X))), p.shape[1])
+    center_y = min(max(0, int(np.sum(p * Y))), p.shape[0])
+
+    return np.array([center_x, center_y])
