@@ -1230,4 +1230,4 @@ def centroid(img):
     center_x = min(max(0, int(np.sum(p * X))), p.shape[1])
     center_y = min(max(0, int(np.sum(p * Y))), p.shape[0])
 
-    return np.array([center_x, center_y])
+    return int(center_x), int(center_y)

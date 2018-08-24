@@ -1089,6 +1089,8 @@ def greedyROI_corr(Y, Y_ds, max_number=None, gSiz=None, gSig=None, center_psf=Tr
         for _ in range(init_iter - 1):
             if max_number is not None:
                 max_number -= A.shape[-1]
+                if Apre is not None:
+                    max_number += Apre.shape[-1]
             if max_number is not 0:
                 print('Initialization again')
                 A_R, C_R, _, _, center_R = init_neurons_corr_pnr(
@@ -1279,8 +1281,6 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
 
     data_filtered = data_raw.copy()
 
-    print('data_raw.shape=',data_raw.shape)
-
     if Apre is not None:
         assert Apre.shape[1:] == (d1, d2), "Bad shape for Apre: {}. Expected (num_neurons, {},{})".format(str(Apre.shape), d1, d2)
 
@@ -1352,15 +1352,18 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
 
     ind_search[ind_bd] = 1
 
+    print('max_number(1)=',max_number)
     # creating variables for storing the results
     if not max_number:
         # maximum number of neurons
         max_number = np.int32((ind_search.size - ind_search.sum()) / 5)
+    print('max_number(2)=',max_number)
 
     # if neurons have been pre-initialized, adjust some values to compensate
     if Apre is not None:
-        nn = Apre.shape[0]
-        max_number += nn
+        print('Apre.shape=',Apre.shape)
+        max_number += Apre.shape[0]
+    print('max_number(3)=', max_number)
 
     Ain = np.zeros(shape=(max_number, d1, d2),
                    dtype=np.float32)  # neuron shapes
@@ -1388,7 +1391,7 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
         # estimate the raw calcium trace for existing footprints
         for k in range(nn):
             ai, ci_raw, ind_success, box_coords = box_and_extract(data_raw, data_filtered,
-                                                                  center[0, k], center[1, k], gSiz)
+                                                                  int(center[0, k]), int(center[1, k]), gSiz)
             Cin[k, :] = ci_raw.squeeze()
 
         # compute the denoised trace and deconvolved events for existing footprints
@@ -1655,9 +1658,6 @@ def box_and_extract(data_raw, data_filtered, center_x, center_y, gSiz, embed_foo
 
     patch_dims = (nr, nc)  # patch dimension
 
-    print('center=({}, {}), r_min={}, r_max={}, c_min={}, c_max={}, nr={}, nc={}'.format(center_x, center_y,
-                                                                                         r_min, r_max, c_min, c_max,
-                                                                                         nr, nc))
     data_raw_box = \
         data_raw[:, r_min:r_max, c_min:c_max].reshape(-1, nr * nc)
     data_filtered_box = \
