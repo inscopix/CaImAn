@@ -1352,18 +1352,14 @@ def init_neurons_corr_pnr(data, max_number=None, gSiz=15, gSig=None,
 
     ind_search[ind_bd] = 1
 
-    print('max_number(1)=',max_number)
     # creating variables for storing the results
     if not max_number:
         # maximum number of neurons
         max_number = np.int32((ind_search.size - ind_search.sum()) / 5)
-    print('max_number(2)=',max_number)
 
     # if neurons have been pre-initialized, adjust some values to compensate
     if Apre is not None:
-        print('Apre.shape=',Apre.shape)
         max_number += Apre.shape[0]
-    print('max_number(3)=', max_number)
 
     Ain = np.zeros(shape=(max_number, d1, d2),
                    dtype=np.float32)  # neuron shapes
