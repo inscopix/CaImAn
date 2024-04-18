@@ -1609,7 +1609,8 @@ def load(file_name: Union[str, List[str]],
             mov = isx.Movie.read(file_name)
             T = mov.timing.num_samples
             dims = mov.spacing.num_pixels
-            fr = 1e6 / mov.timing.period.to_usecs()
+            # fr = 1e6 / mov.timing.period.to_usecs()
+	    fr = 1 / mov.timing.period.secs_float
 
             idx_frames = np.arange(T)
             if subindices is not None:
