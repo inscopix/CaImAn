@@ -2044,7 +2044,12 @@ def get_file_size(file_name, var_name_hdf5:str='mov') -> tuple[tuple, Union[int,
             elif extension in ('.sbx'):
                 shape = caiman.utils.sbx_utils.sbx_shape(file_name[:-4])
                 T = shape[-1]
-                dims = (shape[2], shape[1])                
+                dims = (shape[2], shape[1])
+            elif extension in ('.isxd'):
+                import isx
+                mov = isx.Movie.read(file_name)
+                T = mov.timing.num_samples
+                dims = mov.spacing.num_pixels
             else:
                 raise Exception('Unknown file type')
             dims = tuple(dims)
