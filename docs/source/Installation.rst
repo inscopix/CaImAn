@@ -1,7 +1,7 @@
 Installation and Updating
 =========================
 
-This page will give more detailed setup instructions for Caiman than the `main readme <../../README.md>`_. 
+This page will give more detailed setup instructions for Caiman than the main readme in the source tree.
 This is the place you should visit first if you run into problems and need to troubleshoot. It includes 
 info on initial setup, as well as updating with new releases. There is a Table of Contents on the 
 left-hand side of this page, so if you need help with a particular task, that should help you get oriented. 
@@ -19,50 +19,42 @@ We will discuss each of these steps for different operating systems below. In a 
 upgrade once you've already installed. 
 
 If you do not already have conda installed, first install a 3.x version for your platform `here <https://docs.conda.io/en/latest/miniconda.html>`_. 
-We recommend you familiarise yourself with Conda before going further. If you are using an M1-based Mac, please ignore the 
-ARM builds of conda; install an x86 version instead (ignore any warnings you get while doing so; it will work fine).
+When installing, allow conda to modify your PATH variable. If you are using an M1-based Mac, please ignore the ARM builds of conda; install an x86 version instead (ignore any warnings you get while doing so; 
+it will work fine).
 
+We recommend you familiarise yourself a **little** bit with Conda before going further,
+if you are not already (https://docs.conda.io/projects/conda/en/latest/user-guide/index.html). 
 
 Section 1: Install Caiman
 -------------------------
+There are two main ways to install Caiman: you can install using **conda** (package-based install), or 
+you can install in **development-mode**. The first will be appropriate for almost all users -- those that
+want to get started quickly using Caiman to analyze data. The second, development-mode installation, 
+is for those who want to install an editable version of Caiman in order to tweak to the code base, 
+and make contributions to Caiman. 
 
-There are two main ways to install Caiman: you can use conda (package-based install), and a **development-mode** 
-installation. The first will be appropriate for first-time users that want to get started quickly using 
-Caiman to analyze data. The second, development-mode installation, is for those who want to install an 
-editable version of Caiman in order to tweak to the code base, and make contributions to Caiman.
 
-
-Section 1A. Pre-built conda install
+Section 1A. Install with conda
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-These are basically the Quickstart instructions on the `main readme page <../../README.md>`_, so if you follow those, you 
+These are basically the Quickstart instructions on the main readme page at the repo: <https://github.com/flatironinstitute/CaImAn>, so if you follow those, you 
 should be good to go. 
 
 .. raw:: html
 
    <details>
-   <summary>Conda installer instructions</summary>
+   <summary>Details for conda install</summary>
 
--  This process is the same on every operating system
--  Follow this process if you won't need to work with the CaImAn sources
-   and instead wish to use it as a library (the demos still work this way, and
-   you can use/modify them).
--  You do not need a compiler for this route.
--  You should not download the sources (with git or otherwise) for this route.
--  This route also sets environment variables for you (skip that section below)
--  Download and install Anaconda (Python 3.x)
-   http://docs.continuum.io/anaconda/install. Allow the installer to
-   modify your PATH variable
--  Install mamba into your base environment, with ``conda install -n base -c conda-forge mamba``
--  Create a new environment with the caiman package from conda-forge:
--  If you are installing on Windows, use the conda enabled shell (under "Anaconda" in your programs menu) rather than powershell or a generic prompt:
+This process is the same on every operating system, and is what most users will need who just want to use Caiman to 
+get things running quickly. You will install mamba into your base environment, create a new environment with the 
+caiman package from conda-forge, and then activate the new environment.
 
 .. code:: bash
 
+    conda install -n base -c conda-forge mamba
     mamba create -n caiman -c conda-forge caiman
     conda activate caiman
 
-- The previous two steps installed caiman and activated the virtual environment. 
--  Skip ahead to the section on setting up a data directory with `caimanmanager`
+Note if you are installing on Windows, run the above commands in the anaconda prompt rather than powershell or the dos shell:
 
 **Known issues**
 
@@ -80,8 +72,7 @@ Section 1B. Development-mode install
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Dev mode install allows you to modify the source files of Caiman and makes it easier
-to contribute to the project, fix bugs etc. The general motivation for setting up
-an editable development environment is described in more detail in our `contributors page <../../CONTRIBUTING.md>`_.
+to contribute to the project, fix bugs etc.
 
 If you install in dev mode you will likely need to set some environment variables manually (it is 
 done automatically when you do the conda install): this is discussed in Section 4C.
@@ -94,11 +85,15 @@ Dev-mode install on Windows
    <details>
    <summary>Dev Mode Installation on Windows</summary>
 
-The Windows installation process differs more widely from installation
-on Linux or MacOSX and has different issues you may run into. Everything 
-you do should be from a Conda-enabled shell (which you can find in your 
-Programs menu) rather than from Powershell or any other shell.
+The Windows installation process differs quite a bit from installation
+on Linux or MacOSX. If you can work on Linux, it will be easier. Everything 
+below should be from a Conda-prompt rather than from Powershell or any other shell.
 
+-  Install Microsoft Build Tools for Visual Studio 2019, which you can download 
+   from (https://visualstudio.microsoft.com/vs/older-downloads/). Check the 
+   “Build Tools” box, and in the detailed view on the right check the “C/C++ CLI 
+   Tools” component too. The specifics of this occasionally change as Microsoft 
+   changes its products and website; you may need to go off-script.
 -  Remove any associations you may have made between .py files and an existing python
    interpreter or editor
 -  If you have less than 64GB of RAM, increase the maximum size of your pagefile to 64G or more
@@ -106,36 +101,29 @@ Programs menu) rather than from Powershell or any other shell.
    The Windows memmap interface is sensitive to the maximum setting
    and leaving it at the default can cause errors when processing larger
    datasets
-Installing CaImAn from a package on Windows should be otherwise the same as any other OS for the
-package-based process described above.
 
 At the conda prompt:
 
 .. code:: bash
 
-     git clone https://github.com/your-username/CaImAn
+     git clone git@github.com:flatironinstitute/CaImAn.git
      cd CaImAn
      mamba env create -f environment.yml -n caiman
-     mamba install -n caiman vs2017_win-64
+     conda activate caiman 
+     mamba install -n caiman vs2019_win-64
+     pip install -e . 
 
+A couple of things to note:
 
-Note, as discussed at CONTRIBUTORS.md, you should clone from a fork of caiman at your own 
-github repo. 
-
-At this point you may need to remove a startup script that visual
-studio made for your conda environment that can cause conda to crash
-while entering the caiman environment. Use the Windows find-file utility
-(under the Start Menu) to look for ``vs2015_compiler_vars.bat`` and/or
-``vs2017_compiler_vars.bat`` under your home directory. If a copy shows up, delete the version that has
-conda:raw-latex:`\envs`:raw-latex:`\caiman` as part of its location.
-You may then continue the installation.
-
-.. code:: bash
-
-     conda activate caiman
-     pip install -e .  
-     copy caimanmanager.py ..
-     cd ..
+-  If you don't want to develop code then replace the second-to-last command with
+   ``pip install .`` 
+-  If any of these steps gives you errors do not proceed to the following step without resolving it.
+-  If the environment doesn't active properly, there may be ``bat`` files that 
+   need to be removed. Use the Windows find-file utility
+   (under the Start Menu) to look for ``vs2019_compiler_vars.bat`` under 
+   your home directory. If a copy shows up, delete the version that has
+   your ``caiman`` environment name as part of its location.
+   You may then continue the installation.
 
 .. raw:: html
 
@@ -151,7 +139,7 @@ Dev Mode Install on MacOS and Linux
 
 .. code:: bash
 
-     git clone https://github.com/your-username/CaImAn
+     git clone git@github.com:flatironinstitute/CaImAn.git
      cd CaImAn/
      mamba env create -f environment.yml -n caiman
      source activate caiman
@@ -179,8 +167,8 @@ and install the package file you will find in the folder that pops up
 
 
 
-Section 2: Set up demos 
------------------------
+Section 2: Set up demos with caimanmanager
+------------------------------------------
 
 Once Caiman is installed, you will likely want to set up a working directory with code samples and datasets. 
 The installation step in Section 1 produced a command ``caimanmanager`` that handles this. caimanmanager will
@@ -190,9 +178,9 @@ place demos and data in a ``caiman_data`` folder in your home directory. Install
 
 if you used the conda-forge package or the ``pip install .`` option.
 
-If you installed using the developer-mode option (``installing with ``pip install -e .``) then run caimanmanager with:
+If you installed using the developer-mode option (installing with ``pip install -e .``) then run caimanmanager with:
 
-``python caimanmanager install --inplace`` 
+``caimanmanager install --inplace`` 
 
 If you prefer to manage this information somewhere other than your home directory, the
 ``CAIMAN_DATA`` environment variable can be set to customise it. The caimanmanager tool 
@@ -246,7 +234,7 @@ below to update the code. However, if the environment file has changed
 since your last update this may lead to you not the latest version. None of this applies
 to the conda-forge route (for which instructions are given above).
 
-From the conda environment you used to install CaImAn:
+From the conda environment you used to install Caiman:
 
 1. ``pip uninstall caiman``
 
@@ -268,7 +256,7 @@ From the conda environment you used to install CaImAn:
    variables have changed.
 
 -  The same applies if you want to modify some internal function of
-   CaImAn. If you used the ``pip install -e .`` option then you can
+   Caiman. If you used the ``pip install -e .`` option then you can
    directly modify it (that's why it's the editable developer mode). If you
    used the ``pip install .`` option then you will need to
    ``pip uninstall caiman`` followed by ``pip install .`` for your
@@ -289,7 +277,7 @@ Section 3C: Upgrade the demos with caimanmanager
    <summary>Upgrade the demos</summary>
 
 When you upgrade Caiman, sometimes the underlying APIs change. When this happens and it impacts a demo (or otherwise 
-requires changes to files in ``caiman_data``), we update the demo and data. This means that upgrading CaImAn works 
+requires changes to files in ``caiman_data``), we update the demo and data. This means that upgrading Caiman works 
 best if you also replace the ``caiman_data`` directory with a new version.
 
 To check if the demos or datafiles have changed since your last install, you can run ``caimanmanager check``. If they have not,
@@ -383,6 +371,8 @@ following the instructions
 
 Section 4D: Other topics
 ~~~~~~~~~~~~~~~~~~~~~~~~~
+See also:
 
-- `Running Caiman on a cluster <./CLUSTER.md>`_ 
-- `Setting up Caiman to use your GPUs <./README-GPU.md>`_
+* :doc:`Our clustering doc <cluster>`
+* :doc:`Caiman and GPUs <readme-gpu>`
+

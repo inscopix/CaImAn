@@ -1,6 +1,6 @@
+av
 coverage
 cython
-future
 h5py
 ipykernel
 ipython
@@ -25,3 +25,4 @@ tifffile
 tk
 tqdm
 yapf
+zarr

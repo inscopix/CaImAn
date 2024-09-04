@@ -1,10 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Oct 20 12:12:34 2016
-
-@author: agiovann
-"""
 
 import cv2
 import itertools
@@ -16,12 +10,13 @@ import tensorflow as tf
 import scipy
 from scipy.sparse import csc_matrix
 from scipy.stats import norm
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 import warnings
 
+import caiman
 from caiman.paths import caiman_datadir
-from .utils.stats import mode_robust, mode_robust_fast
-from .utils.utils import load_graph
+import caiman.utils.stats
+import caiman.utils.utils
 
 try:
     cv2.setNumThreads(0)
@@ -31,17 +26,15 @@ except:
 try:
     profile
 except:
-
     def profile(a):
         return a
-
 
 @profile
 def compute_event_exceptionality(traces: np.ndarray,
                                  robust_std: bool = False,
                                  N: int = 5,
                                  use_mode_fast: bool = False,
-                                 sigma_factor: float = 3.) -> Tuple[np.ndarray, np.ndarray, Any, Any]:
+                                 sigma_factor: float = 3.) -> tuple[np.ndarray, np.ndarray, Any, Any]:
     """
     Define a metric and order components according to the probability of some "exceptional events" (like a spike).
 
@@ -72,7 +65,7 @@ def compute_event_exceptionality(traces: np.ndarray,
             value estimate of the quality of components (the lesser the better)
 
         erfc: ndarray
-            probability at each time step of observing the N consequtive actual trace values given the distribution of noise
+            probability at each time step of observing the N consecutive actual trace values given the distribution of noise
 
         noise_est: ndarray
             the components ordered according to the fitness
@@ -83,9 +76,9 @@ def compute_event_exceptionality(traces: np.ndarray,
 
     T = np.shape(traces)[-1]
     if use_mode_fast:
-        md = mode_robust_fast(traces, axis=1)
+        md = caiman.utils.stats.mode_robust_fast(traces, axis=1)
     else:
-        md = mode_robust(traces, axis=1)
+        md = caiman.utils.stats.mode_robust(traces, axis=1)
 
     ff1 = traces - md[:, None]
 
@@ -141,15 +134,16 @@ def compute_eccentricity(A, dims, order='F'):
         ecc.append(np.sqrt(eigs[1]/(eigs[0] + np.finfo(np.float32).eps)))
     return np.array(ecc)
 
-#%%
-def find_activity_intervals(C, Npeaks: int = 5, tB=-3, tA=10, thres: float = 0.3) -> List:
+def find_activity_intervals(C, Npeaks: int = 5, tB=-3, tA=10, thres: float = 0.3) -> list:
     # todo todocument
+    logger = logging.getLogger("caiman")
+
     K, T = np.shape(C)
-    L: List = []
+    L:list = []
     for i in range(K):
         if np.sum(np.abs(np.diff(C[i, :]))) == 0:
             L.append([])
-            logging.debug('empty component at:' + str(i))
+            logger.debug(f'empty component at: {i}')
             continue
         indexes = peakutils.indexes(C[i, :], thres=thres)
         srt_ind = indexes[np.argsort(C[i, indexes])][::-1]
@@ -169,9 +163,7 @@ def find_activity_intervals(C, Npeaks: int = 5, tB=-3, tA=10, thres: float = 0.3
 
     return LOC
 
-
-#%%
-def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, thres=0.3) -> Tuple[np.ndarray, List]:
+def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, thres=0.3) -> tuple[np.ndarray, list]:
     """Computes the space correlation values between the detected spatial
     footprints and the original data when background and neighboring component
     activity has been removed.
@@ -214,6 +206,7 @@ def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, t
         significant_samples: list
             Frames that were used for computing correlation values
     """
+    logger = logging.getLogger("caiman")
 
     K, _ = np.shape(C)
     A = csc_matrix(A)
@@ -225,10 +218,10 @@ def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, t
     LOC = find_activity_intervals(C, Npeaks=Npeaks, tB=tB, tA=tA, thres=thres)
     rval = np.zeros(K)
 
-    significant_samples: List[Any] = []
+    significant_samples:list[Any] = []
     for i in range(K):
         if (i + 1) % 200 == 0:         # Show status periodically
-            logging.info('Components evaluated:' + str(i))
+            logger.info(f'Components evaluated: {i}')
         if LOC[i] is not None:
             atemp = A[:, i].toarray().flatten()
             atemp[np.isnan(atemp)] = np.nanmean(atemp)
@@ -240,14 +233,13 @@ def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, t
 
             if len(indexes) == 0:
                 indexes = set(LOC[i])
-                logging.warning('Component {0} is only active '.format(i) +
-                                'jointly with neighboring components. Space ' +
+                logger.warning(f'Component {i} is only active jointly with neighboring components. Space ' +
                                 'correlation calculation might be unreliable.')
 
             indexes = np.array(list(indexes)).astype(int)
             px = np.where(atemp > 0)[0]
             if px.size < 3:
-                logging.warning('Component {0} is almost empty. '.format(i) + 'Space correlation is set to 0.')
+                logger.warning(f'Component {i} is almost empty. Space correlation is set to 0.')
                 rval[i] = 0
                 significant_samples.append({0})
             else:
@@ -263,22 +255,19 @@ def classify_components_ep(Y, A, C, b, f, Athresh=0.1, Npeaks=5, tB=-3, tA=10, t
 
     return rval, significant_samples
 
-
-#%%
-
-
 def evaluate_components_CNN(A,
                             dims,
                             gSig,
                             model_name: str = os.path.join(caiman_datadir(), 'model', 'cnn_model'),
                             patch_size: int = 50,
                             loaded_model=None,
-                            isGPU: bool = False) -> Tuple[Any, np.array]:
+                            isGPU: bool = False) -> tuple[Any, np.array]:
     """ evaluate component quality using a CNN network
 
         if isGPU is false, and the environment variable 'CAIMAN_ALLOW_GPU' is not set,
         then this code will try not to use a GPU. Otherwise it will use one if it finds it.
     """
+    logger = logging.getLogger("caiman")
 
     # TODO: Find a less ugly way to do this
     if not isGPU and 'CAIMAN_ALLOW_GPU' not in os.environ:
@@ -288,10 +277,10 @@ def evaluate_components_CNN(A,
         os.environ["KERAS_BACKEND"] = "tensorflow"
         from tensorflow.keras.models import model_from_json
         use_keras = True
-        logging.info('Using Keras')
+        logger.info('Using Keras')
     except (ModuleNotFoundError):
         use_keras = False
-        logging.info('Using Tensorflow')
+        logger.info('Using Tensorflow')
 
     if loaded_model is None:
         if use_keras:
@@ -317,9 +306,9 @@ def evaluate_components_CNN(A,
             else:
                 raise FileNotFoundError(f"File for requested model {model_name} not found")
             print(f"USING MODEL (tensorflow API): {model_file}")
-            loaded_model = load_graph(model_file)
+            loaded_model = caiman.utils.utils.load_graph(model_file)
 
-        logging.debug("Loaded model from disk")
+        logger.debug("Loaded model from disk")
 
     half_crop = np.minimum(gSig[0] * 4 + 1, patch_size), np.minimum(gSig[1] * 4 + 1, patch_size)
     dims = np.array(dims)
@@ -342,10 +331,6 @@ def evaluate_components_CNN(A,
 
     return predictions, final_crops
 
-
-#%%
-
-
 def evaluate_components(Y: np.ndarray,
                         traces: np.ndarray,
                         A,
@@ -359,7 +344,7 @@ def evaluate_components(Y: np.ndarray,
                         Athresh: float = 0.1,
                         Npeaks: int = 5,
                         thresh_C: float = 0.3,
-                        sigma_factor: float = 3.) -> Tuple[Any, Any, Any, Any, Any, Any]:
+                        sigma_factor: float = 3.) -> tuple[Any, Any, Any, Any, Any, Any]:
     """ Define a metric and order components according to the probability of some "exceptional events" (like a spike).
 
     Such probability is defined as the likelihood of observing the actual trace value over N samples given an estimated noise distribution.
@@ -414,10 +399,10 @@ def evaluate_components(Y: np.ndarray,
             value estimate of the quality of components (the lesser the better) on diff(trace)
 
         erfc_raw: ndarray
-            probability at each time step of observing the N consequtive actual trace values given the distribution of noise on the raw trace
+            probability at each time step of observing the N consecutive actual trace values given the distribution of noise on the raw trace
 
         erfc_raw: ndarray
-            probability at each time step of observing the N consequtive actual trace values given the distribution of noise on diff(trace)
+            probability at each time step of observing the N consecutive actual trace values given the distribution of noise on diff(trace)
 
         r_values: list
             float values representing correlation between component and spatial mask obtained by averaging important points
@@ -425,21 +410,22 @@ def evaluate_components(Y: np.ndarray,
         significant_samples: ndarray
             indexes of samples used to obtain the spatial mask by average
     """
+    logger = logging.getLogger("caiman")
 
     tB = np.minimum(-2, np.floor(-5. / 30 * final_frate))
     tA = np.maximum(5, np.ceil(25. / 30 * final_frate))
-    logging.info('tB:' + str(tB) + ',tA:' + str(tA))
+    logger.info(f'{tB=},{tA=}')
     dims, T = np.shape(Y)[:-1], np.shape(Y)[-1]
 
     Yr = np.reshape(Y, (np.prod(dims), T), order='F')
 
-    logging.debug('Computing event exceptionality delta')
+    logger.debug('Computing event exceptionality delta')
     fitness_delta, erfc_delta, _, _ = compute_event_exceptionality(np.diff(traces, axis=1),
                                                                    robust_std=robust_std,
                                                                    N=N,
                                                                    sigma_factor=sigma_factor)
 
-    logging.debug('Removing Baseline')
+    logger.debug('Removing Baseline')
     if remove_baseline:
         num_samps_bl = np.minimum(np.shape(traces)[-1]// 5, 800)
         slow_baseline = False
@@ -456,12 +442,12 @@ def evaluate_components(Y: np.ndarray,
             padafter = int(np.ceil(elm_missing / 2.))
             tr_tmp = np.pad(traces.T, ((padbefore, padafter), (0, 0)), mode='reflect')
             numFramesNew, num_traces = np.shape(tr_tmp)
-                                                                                             #% compute baseline quickly
-            logging.debug("binning data ...")
+                                                                                             # compute baseline quickly
+            logger.debug("binning data ...")
             tr_BL = np.reshape(tr_tmp, (downsampfact, numFramesNew // downsampfact, num_traces), order='F')
             tr_BL = np.percentile(tr_BL, 8, axis=0)
-            logging.debug("interpolating data ...")
-            logging.debug(tr_BL.shape)
+            logger.debug("interpolating data ...")
+            logger.debug(tr_BL.shape)
             tr_BL = scipy.ndimage.zoom(np.array(tr_BL, dtype=np.float32), [downsampfact, 1],
                                        order=3,
                                        mode='constant',
@@ -472,13 +458,13 @@ def evaluate_components(Y: np.ndarray,
             else:
                 traces -= tr_BL[padbefore:-padafter].T
 
-    logging.debug('Computing event exceptionality')
+    logger.debug('Computing event exceptionality')
     fitness_raw, erfc_raw, _, _ = compute_event_exceptionality(traces,
                                                                robust_std=robust_std,
                                                                N=N,
                                                                sigma_factor=sigma_factor)
 
-    logging.debug('Evaluating spatial footprint')
+    logger.debug('Evaluating spatial footprint')
     # compute the overlap between spatial and movie average across samples with significant events
     r_values, significant_samples = classify_components_ep(Yr,
                                                            A,
@@ -501,9 +487,8 @@ def grouper(n: int, iterable, fillvalue: bool = None):
 
 
 def evaluate_components_placeholder(params):
-    import caiman as cm
     fname, traces, A, C, b, f, final_frate, remove_baseline, N, robust_std, Athresh, Npeaks, thresh_C = params
-    Yr, dims, T = cm.load_memmap(fname)
+    Yr, dims, T = caiman.load_memmap(fname)
     Y = np.reshape(Yr, dims + (T,), order='F')
     fitness_raw, fitness_delta, _, _, r_values, significant_samples = \
         evaluate_components(Y, traces, A, C, b, f, final_frate, remove_baseline=remove_baseline,
@@ -532,7 +517,7 @@ def estimate_components_quality_auto(Y,
                                      thresh_cnn_lowest=0.1,
                                      thresh_fitness_delta=-20.,
                                      min_SNR_reject=0.5,
-                                     gSig_range=None) -> Tuple[np.array, np.array, float, float, float]:
+                                     gSig_range=None) -> tuple[np.array, np.array, float, float, float]:
     ''' estimates the quality of component automatically
 
     Args:
@@ -649,7 +634,7 @@ def select_components_from_metrics(A,
                                    gSig_range=None,
                                    neuron_class=1,
                                    predictions=None,
-                                   **kwargs) -> Tuple[np.array, np.array, Any]:
+                                   **kwargs) -> tuple[np.array, np.array, Any]:
     '''Selects components based on pre-computed metrics. For each metric
     space correlation, trace SNR, and CNN classifier both an upper and a lower
     thresholds are considered. A component is accepted if and only if it
@@ -712,7 +697,7 @@ def estimate_components_quality(traces,
                                 robust_std=False,
                                 Athresh=0.1,
                                 thresh_C=0.3,
-                                num_traces_per_group=20) -> Tuple[np.ndarray, ...]:
+                                num_traces_per_group=20) -> tuple[np.ndarray, ...]:
     """ Define a metric and order components according to the probability of some "exceptional events" (like a spike).
 
     Such probability is defined as the likelihood of observing the actual trace value over N samples given an estimated noise distribution.
@@ -770,9 +755,10 @@ def estimate_components_quality(traces,
 
     """
     # TODO: Consider always returning it all and let the caller ignore what it does not want
+    logger = logging.getLogger("caiman")
 
     if 'memmap' not in str(type(Y)):
-        logging.warning('NOT MEMORY MAPPED. FALLING BACK ON SINGLE CORE IMPLEMENTATION')
+        logger.warning('NOT MEMORY MAPPED. FALLING BACK ON SINGLE CORE IMPLEMENTATION')
         fitness_raw, fitness_delta, erfc_raw, erfc_delta, r_values, _ = \
             evaluate_components(Y, traces, A, C, b, f, final_frate, remove_baseline=remove_baseline,
                                 N=N, robust_std=robust_std, Athresh=Athresh,
@@ -802,7 +788,7 @@ def estimate_components_quality(traces,
             if dview is None:
                 res = map(evaluate_components_placeholder, params)
             else:
-                logging.info('Component evaluation in parallel')
+                logger.info('Component evaluation in parallel')
                 if 'multiprocessing' in str(type(dview)):
                     res = dview.map_async(evaluate_components_placeholder, params).get(4294967)
                 else:

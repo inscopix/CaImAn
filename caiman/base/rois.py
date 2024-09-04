@@ -1,36 +1,26 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Oct 22 13:22:26 2015
-
-@author: agiovann
-"""
 
 import cv2
 import json
 import logging
+import matplotlib
 import matplotlib.pyplot as pl
-import matplotlib.patches as mpatches
 import numpy as np
 import os
-
 import scipy
 from scipy.ndimage import label, gaussian_filter
 from scipy.optimize import linear_sum_assignment
-
 import shutil
-
 from skimage.draw import polygon
 from skimage.filters import sobel
 from skimage.morphology import remove_small_objects, remove_small_holes, dilation, closing
 from skimage.segmentation import watershed
-
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 import zipfile
 
-from ..motion_correction import tile_and_correct
+from caiman.motion_correction import tile_and_correct
 
 try:
     cv2.setNumThreads(0)
@@ -38,46 +28,36 @@ except:
     pass
 
 
-def com(A: np.ndarray, d1: int, d2: int, d3: Optional[int] = None) -> np.array:
+def com(A, d1: int, d2: int, d3: Optional[int] = None, order: str = 'F') -> np.ndarray:
     """Calculation of the center of mass for spatial components
 
      Args:
-         A:   np.ndarray
-              matrix of spatial components (d x K)
+         A: np.ndarray or scipy.sparse array or matrix
+              matrix of spatial components (d x K).
 
-         d1:  int
-              number of pixels in x-direction
-
-         d2:  int
-              number of pixels in y-direction
-
-         d3:  int
-              number of pixels in z-direction
+         d1, d2, d3: ints
+              d1, d2, and (optionally) d3 are the original dimensions of the data.
+            
+         order: 'C' or 'F'
+              how each column of A should be reshaped to match the given dimensions.
 
      Returns:
          cm:  np.ndarray
-              center of mass for spatial components (K x 2 or 3)
+              center of mass for spatial components (K x D)
     """
-
     if 'csc_matrix' not in str(type(A)):
         A = scipy.sparse.csc_matrix(A)
 
-    if d3 is None:
-        Coor = np.matrix([np.outer(np.ones(d2), np.arange(d1)).ravel(),
-                          np.outer(np.arange(d2), np.ones(d1)).ravel()],
-                         dtype=A.dtype)
-    else:
-        Coor = np.matrix([
-            np.outer(np.ones(d3),
-                     np.outer(np.ones(d2), np.arange(d1)).ravel()).ravel(),
-            np.outer(np.ones(d3),
-                     np.outer(np.arange(d2), np.ones(d1)).ravel()).ravel(),
-            np.outer(np.arange(d3),
-                     np.outer(np.ones(d2), np.ones(d1)).ravel()).ravel()
-        ],
-                         dtype=A.dtype)
+    dims = [d1, d2]
+    if d3 is not None:
+        dims.append(d3)
 
-    cm = (Coor * A / A.sum(axis=0)).T
+    # make coordinate arrays where coor[d] increases from 0 to npixels[d]-1 along the dth axis
+    coors = np.meshgrid(*[range(d) for d in dims], indexing='ij')
+    coor = np.stack([c.ravel(order=order) for c in coors])
+
+    # take weighted sum of pixel positions along each coordinate
+    cm = (coor @ A / A.sum(axis=0)).T
     return np.array(cm)
 
 
@@ -86,7 +66,7 @@ def extract_binary_masks_from_structural_channel(Y,
                                                  min_hole_size: int = 15,
                                                  gSig: int = 5,
                                                  expand_method: str = 'closing',
-                                                 selem: np.array = np.ones((3, 3))) -> Tuple[np.ndarray, np.array]:
+                                                 selem: np.array = np.ones((3, 3))) -> tuple[np.ndarray, np.array]:
     """Extract binary masks by using adaptive thresholding on a structural channel
 
     Args:
@@ -106,7 +86,7 @@ def extract_binary_masks_from_structural_channel(Y,
                             method to expand binary masks (morphological closing or dilation)
 
         selem:              np.array
-                            morphological element with which to expand binary masks
+                            structuring element ('selem') with which to expand binary masks
 
     Returns:
         A:                  sparse column format matrix
@@ -131,9 +111,9 @@ def extract_binary_masks_from_structural_channel(Y,
     for i in range(areas[1]):
         temp = (areas[0] == i + 1)
         if expand_method == 'dilation':
-            temp = dilation(temp, selem=selem)
+            temp = dilation(temp, footprint=selem)
         elif expand_method == 'closing':
-            temp = closing(temp, selem=selem)
+            temp = closing(temp, footprint=selem)
 
         A[:, i] = temp.flatten('F')
 
@@ -157,7 +137,7 @@ def mask_to_2d(mask):
         ), order='F'))
 
 
-def get_distance_from_A(masks_gt, masks_comp, min_dist=10) -> List:
+def get_distance_from_A(masks_gt, masks_comp, min_dist=10) -> list:
     # todo todocument
 
     _, d1, d2 = np.shape(masks_gt)
@@ -232,6 +212,7 @@ def nf_match_neurons_in_binary_masks(masks_gt,
             indices false pos
 
     """
+    logger = logging.getLogger("caiman")
 
     _, d1, d2 = np.shape(masks_gt)
     dims = d1, d2
@@ -251,7 +232,7 @@ def nf_match_neurons_in_binary_masks(masks_gt,
     cm_cnmf = [scipy.ndimage.center_of_mass(mm) for mm in masks_comp]
 
     if D is None:
-        #% find distances and matches
+        # find distances and matches
         # find the distance between each masks
         D = distance_masks([A_ben, A_cnmf], [cm_ben, cm_cnmf], min_dist, enclosed_thr=enclosed_thr)
 
@@ -261,7 +242,7 @@ def nf_match_neurons_in_binary_masks(masks_gt,
     matches = matches[0]
     costs = costs[0]
 
-    #%% compute precision and recall
+    # compute precision and recall
     TP = np.sum(np.array(costs) < thresh_cost) * 1.
     FN = np.shape(masks_gt)[0] - TP
     FP = np.shape(masks_comp)[0] - TP
@@ -272,8 +253,8 @@ def nf_match_neurons_in_binary_masks(masks_gt,
     performance['precision'] = TP / (TP + FP)
     performance['accuracy'] = (TP + TN) / (TP + FP + FN + TN)
     performance['f1_score'] = 2 * TP / (2 * TP + FP + FN)
-    logging.debug(performance)
-    #%%
+    logger.debug(performance)
+
     idx_tp = np.where(np.array(costs) < thresh_cost)[0]
     idx_tp_ben = matches[0][idx_tp]    # ground truth
     idx_tp_cnmf = matches[1][idx_tp]   # algorithm - comp
@@ -292,8 +273,8 @@ def nf_match_neurons_in_binary_masks(masks_gt,
             font = {'family': 'Myriad Pro', 'weight': 'regular', 'size': 10}
             pl.rc('font', **font)
             lp, hp = np.nanpercentile(Cn, [5, 95])
-            ses_1 = mpatches.Patch(color=colors[0], label=labels[0])
-            ses_2 = mpatches.Patch(color=colors[1], label=labels[1])
+            ses_1 = matplotlib.patches.Patch(color=colors[0], label=labels[0])
+            ses_2 = matplotlib.patches.Patch(color=colors[1], label=labels[1])
             pl.subplot(1, 2, 1)
             pl.imshow(Cn, vmin=lp, vmax=hp, cmap=cmap)
             [pl.contour(norm_nrg(mm), levels=[level], colors=colors[1], linewidths=1) for mm in masks_comp[idx_tp_comp]]
@@ -317,8 +298,8 @@ def nf_match_neurons_in_binary_masks(masks_gt,
             pl.show()
             pl.axis('off')
         except Exception as e:
-            logging.warning("not able to plot precision recall: graphics failure")
-            logging.warning(e)
+            logger.warning("not able to plot precision recall: graphics failure")
+            logger.warning(e)
     return idx_tp_gt, idx_tp_comp, idx_fn_gt, idx_fp_comp, performance
 
 
@@ -412,11 +393,7 @@ def register_ROIs(A1,
             ROIs from session 2 aligned to session 1
 
     """
-
-    #    if 'csc_matrix' not in str(type(A1)):
-    #        A1 = scipy.sparse.csc_matrix(A1)
-    #    if 'csc_matrix' not in str(type(A2)):
-    #        A2 = scipy.sparse.csc_matrix(A2)
+    logger = logging.getLogger("caiman")
 
     if 'ndarray' not in str(type(A1)):
         A1 = A1.toarray()
@@ -480,7 +457,7 @@ def register_ROIs(A1,
     matches = matches[0]
     costs = costs[0]
 
-    #%% store indices
+    # store indices
 
     idx_tp = np.where(np.array(costs) < thresh_cost)[0]
     if len(idx_tp) > 0:
@@ -497,7 +474,7 @@ def register_ROIs(A1,
         non_matched1 = list(range(D[0].shape[0]))
         non_matched2 = list(range(D[0].shape[1]))
 
-    #%% compute precision and recall
+    # compute precision and recall
 
     FN = D[0].shape[0] - TP
     FP = D[0].shape[1] - TP
@@ -508,7 +485,7 @@ def register_ROIs(A1,
     performance['precision'] = TP / (TP + FP)
     performance['accuracy'] = (TP + TN) / (TP + FP + FN + TN)
     performance['f1_score'] = 2 * TP / (2 * TP + FP + FN)
-    logging.info(performance)
+    logger.info(performance)
 
     if plot_results:
         if Cn is None:
@@ -540,11 +517,6 @@ def register_ROIs(A1,
         [pl.contour(norm_nrg(mm), levels=[level], colors='r', linewidths=1) for mm in masks_2[non_matched2]]
         pl.title('Mismatches')
         pl.axis('off')
-
-
-#        except Exception as e:
-#            logging.warning("not able to plot precision recall usually because we are on travis")
-#            logging.warning(e)
 
     return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2
 
@@ -606,6 +578,7 @@ def register_multisession(A,
             by component k in A_union
 
     """
+    logger = logging.getLogger("caiman")
 
     n_sessions = len(A)
     templates = list(templates)
@@ -635,7 +608,7 @@ def register_multisession(A,
                                     enclosed_thr=enclosed_thr)
 
         mat_sess, mat_un, nm_sess, nm_un, _, A2 = reg_results
-        logging.info(len(mat_sess))
+        logger.info(len(mat_sess))
         A_union = A2.copy()
         A_union[:, mat_un] = A[sess][:, mat_sess]
         A_union = np.concatenate((A_union.toarray(), A[sess][:, nm_sess]), axis=1)
@@ -698,7 +671,7 @@ def norm_nrg(a_):
     return a.reshape(dims, order='F')
 
 
-def distance_masks(M_s: List, cm_s: List[List], max_dist: float, enclosed_thr: Optional[float] = None) -> List:
+def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Optional[float] = None) -> list:
     """
     Compute distance matrix based on an intersection over union metric. Matrix are compared in order,
     with matrix i compared with matrix i+1
@@ -729,7 +702,7 @@ def distance_masks(M_s: List, cm_s: List[List], max_dist: float, enclosed_thr: O
     for gt_comp, test_comp, cmgt_comp, cmtest_comp in zip(M_s[:-1], M_s[1:], cm_s[:-1], cm_s[1:]):
 
         # todo : better with a function that calls itself
-        # not to interfer with M_s
+        # not to interfere with M_s
         gt_comp = gt_comp.copy()[:, :]
         test_comp = test_comp.copy()[:, :]
 
@@ -762,8 +735,8 @@ def distance_masks(M_s: List, cm_s: List[List], max_dist: float, enclosed_thr: O
                     # if we don't have even a union this is pointless
                     if union > 0:
 
-                        # intersection is removed from union since union contains twice the overlaping area
-                        # having the values in this format 0-1 is helpfull for the hungarian algorithm that follows
+                        # intersection is removed from union since union contains twice the overlapping area
+                        # having the values in this format 0-1 is helpful for the hungarian algorithm that follows
                         D[i, j] = 1 - 1. * intersection / \
                             (union - intersection)
                         if enclosed_thr is not None:
@@ -781,8 +754,9 @@ def distance_masks(M_s: List, cm_s: List[List], max_dist: float, enclosed_thr: O
     return D_s
 
 
-def find_matches(D_s, print_assignment: bool = False) -> Tuple[List, List]:
+def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
     # todo todocument
+    logger = logging.getLogger("caiman")
 
     matches = []
     costs = []
@@ -791,7 +765,7 @@ def find_matches(D_s, print_assignment: bool = False) -> Tuple[List, List]:
         # we make a copy not to set changes in the original
         DD = D.copy()
         if np.sum(np.where(np.isnan(DD))) > 0:
-            logging.error('Exception: Distance Matrix contains invalid value NaN')
+            logger.error('Exception: Distance Matrix contains invalid value NaN')
             raise Exception('Distance Matrix contains invalid value NaN')
 
         # we do the hungarian
@@ -800,21 +774,21 @@ def find_matches(D_s, print_assignment: bool = False) -> Tuple[List, List]:
         matches.append(indexes)
         DD = D.copy()
         total = []
-        # we want to extract those informations from the hungarian algo
+        # we want to extract those information from the hungarian algo
         for row, column in indexes2:
             value = DD[row, column]
             if print_assignment:
-                logging.debug(('(%d, %d) -> %f' % (row, column, value)))
+                logger.debug(f'({row}, {column}) -> {value}')
             total.append(value)
-        logging.debug(('FOV: %d, shape: %d,%d total cost: %f' % (ii, DD.shape[0], DD.shape[1], np.sum(total))))
-        logging.debug((time.time() - t_start))
+        logger.debug(f'FOV: {ii}, shape: {DD.shape[0]},{DD.shape[1]} total cost: {np.sum(total)}')
+        logger.debug(time.time() - t_start)
         costs.append(total)
         # send back the results in the format we want
     return matches, costs
 
 
-def link_neurons(matches: List[List[Tuple]],
-                 costs: List[List],
+def link_neurons(matches: list[list[tuple]],
+                 costs: list[list],
                  max_cost: float = 0.6,
                  min_FOV_present: Optional[int] = None):
     """
@@ -838,6 +812,8 @@ def link_neurons(matches: List[List[Tuple]],
         neurons: list of arrays representing the indices of neurons in each FOV
 
     """
+    logger = logging.getLogger("caiman")
+
     if min_FOV_present is None:
         min_FOV_present = len(matches)
 
@@ -862,11 +838,11 @@ def link_neurons(matches: List[List[Tuple]],
             neurons.append(neuron)
 
     neurons = np.array(neurons).T
-    logging.info(f'num_neurons: {num_neurons}')
+    logger.info(f'num_neurons: {num_neurons}')
     return neurons
 
 
-def nf_load_masks(file_name: str, dims: Tuple[int, ...]) -> np.array:
+def nf_load_masks(file_name: str, dims: tuple[int, ...]) -> np.array:
     # todo todocument
 
     # load the regions (training data only)
@@ -882,7 +858,7 @@ def nf_load_masks(file_name: str, dims: Tuple[int, ...]) -> np.array:
     return masks
 
 
-def nf_masks_to_json(binary_masks: np.ndarray, json_filename: str) -> List[Dict]:
+def nf_masks_to_json(binary_masks: np.ndarray, json_filename: str) -> list[dict]:
     """
     Take as input a tensor of binary mask and produces json format for neurofinder
 
@@ -907,7 +883,7 @@ def nf_masks_to_json(binary_masks: np.ndarray, json_filename: str) -> List[Dict]
     return regions
 
 
-def nf_masks_to_neurof_dict(binary_masks: np.ndarray, dataset_name: str) -> Dict[str, Any]:
+def nf_masks_to_neurof_dict(binary_masks: np.ndarray, dataset_name: str) -> dict[str, Any]:
     """
     Take as input a tensor of binary mask and produces dict format for neurofinder
 
@@ -937,6 +913,8 @@ def nf_read_roi(fileobj) -> np.ndarray:
 
     Adapted from https://gist.github.com/luispedro/3437255
     '''
+    logger = logging.getLogger("caiman")
+
     # This is based on:
     # http://rsbweb.nih.gov/ij/developer/source/ij/io/RoiDecoder.java.html
     # http://rsbweb.nih.gov/ij/developer/source/ij/io/RoiEncoder.java.html
@@ -977,8 +955,7 @@ def nf_read_roi(fileobj) -> np.ndarray:
 
     magic = fileobj.read(4)
     if magic != 'Iout':
-        #        raise IOError('Magic number not found')
-        logging.warning('Magic number not found')
+        logger.warning('Magic number not found')
     version = get16()
 
     # It seems that the roi type field occupies 2 Bytes, but only one is used
@@ -986,13 +963,6 @@ def nf_read_roi(fileobj) -> np.ndarray:
     roi_type = get8()
     # Discard second Byte:
     get8()
-
-    #    if not (0 <= roi_type < 11):
-    #        logging.error(('roireader: ROI type %s not supported' % roi_type))
-    #
-    #    if roi_type != 7:
-    #
-    #        logging.error(('roireader: ROI type %s not supported (!= 7)' % roi_type))
 
     top = get16()
     left = get16()
@@ -1010,7 +980,7 @@ def nf_read_roi(fileobj) -> np.ndarray:
     fill_color = get32()
     subtype = get16()
     if subtype != 0:
-        raise ValueError('roireader: ROI subtype %s not supported (!= 0)' % subtype)
+        raise ValueError(f'roireader: ROI subtype {subtype} not supported (!= 0)')
     options = get16()
     arrow_style = get8()
     arrow_head_size = get8()
@@ -1033,7 +1003,7 @@ def nf_read_roi(fileobj) -> np.ndarray:
     return points
 
 
-def nf_read_roi_zip(fname: str, dims: Tuple[int, ...], return_names=False) -> np.array:
+def nf_read_roi_zip(fname: str, dims: tuple[int, ...], return_names=False) -> np.array:
     # todo todocument
 
     with zipfile.ZipFile(fname) as zf:
@@ -1055,7 +1025,7 @@ def nf_read_roi_zip(fname: str, dims: Tuple[int, ...], return_names=False) -> np
         return masks
 
 
-def nf_merge_roi_zip(fnames: List[str], idx_to_keep: List[List], new_fold: str):
+def nf_merge_roi_zip(fnames: list[str], idx_to_keep: list[list], new_fold: str):
     """
     Create a zip file containing ROIs for ImageJ by combining elements from a list of ROI zip files
 
@@ -1070,6 +1040,8 @@ def nf_merge_roi_zip(fnames: List[str], idx_to_keep: List[List], new_fold: str):
             name of the output zip file (without .zip extension)
 
     """
+    logger = logging.getLogger("caiman")
+
     folders_rois = []
     files_to_keep = []
     # unzip the files and keep only the ones that are requested
@@ -1078,7 +1050,7 @@ def nf_merge_roi_zip(fnames: List[str], idx_to_keep: List[List], new_fold: str):
         folders_rois.append(dirpath)
         with zipfile.ZipFile(fn) as zf:
             name_rois = zf.namelist()
-            logging.debug(len(name_rois))
+            logger.debug(len(name_rois))
         zip_ref = zipfile.ZipFile(fn, 'r')
         zip_ref.extractall(dirpath)
         files_to_keep.append([os.path.join(dirpath, ff) for ff in np.array(name_rois)[idx]])
@@ -1093,18 +1065,18 @@ def nf_merge_roi_zip(fnames: List[str], idx_to_keep: List[List], new_fold: str):
 
 
 def extract_binary_masks_blob(A,
-                              neuron_radius: float,
-                              dims: Tuple[int, ...],
-                              num_std_threshold: int = 1,
-                              minCircularity: float = 0.5,
-                              minInertiaRatio: float = 0.2,
-                              minConvexity: float = .8) -> Tuple[np.array, np.array, np.array]:
+                              neuron_radius:float,
+                              dims:tuple[int, ...],
+                              num_std_threshold:int = 1,
+                              minCircularity:float = 0.5,
+                              minInertiaRatio:float = 0.2,
+                              minConvexity:float = .8) -> tuple[np.array, np.array, np.array]:
     """
     Function to extract masks from data. It will also perform a preliminary selectino of good masks based on criteria like shape and size
 
     Args:
         A: scipy.sparse matrix
-            contains the components as outputed from the CNMF algorithm
+            contains the components as outputted from the CNMF algorithm
 
         neuron_radius: float
             neuronal radius employed in the CNMF settings (gSiz)
@@ -1129,6 +1101,8 @@ def extract_binary_masks_blob(A,
         neg_examples:
 
     """
+    logger = logging.getLogger("caiman")
+
     params = cv2.SimpleBlobDetector_Params()
     params.minCircularity = minCircularity
     params.minInertiaRatio = minInertiaRatio
@@ -1156,7 +1130,7 @@ def extract_binary_masks_blob(A,
     neg_examples = []
 
     for count, comp in enumerate(A.tocsc()[:].T):
-        logging.debug(count)
+        logger.debug(count)
         comp_d = np.array(comp.todense())
         gray_image = np.reshape(comp_d, dims, order='F')
         gray_image = (gray_image - np.min(gray_image)) / \
@@ -1181,7 +1155,7 @@ def extract_binary_masks_blob(A,
             edges = (label_objects == (1 + idx_largest))
             edges = scipy.ndimage.binary_fill_holes(edges)
         else:
-            logging.warning('empty component')
+            logger.warning('empty component')
             edges = np.zeros_like(edges)
 
         masks_ws.append(edges)
@@ -1202,7 +1176,7 @@ def extract_binary_masks_blob_parallel(A,
                                        minCircularity=0.5,
                                        minInertiaRatio=0.2,
                                        minConvexity=.8,
-                                       dview=None) -> Tuple[List, List, List]:
+                                       dview=None) -> tuple[list, list, list]:
     # todo todocument
 
     pars = []
@@ -1225,7 +1199,7 @@ def extract_binary_masks_blob_parallel(A,
     return masks, is_pos, is_neg
 
 
-def extract_binary_masks_blob_parallel_place_holder(pars: Tuple) -> Tuple[Any, Any, Any]:
+def extract_binary_masks_blob_parallel_place_holder(pars:tuple) -> tuple[Any, Any, Any]:
     A, neuron_radius, dims, num_std_threshold, _, minInertiaRatio, minConvexity = pars
     masks_ws, pos_examples, neg_examples = extract_binary_masks_blob(A,
                                                                      neuron_radius,
@@ -1238,7 +1212,7 @@ def extract_binary_masks_blob_parallel_place_holder(pars: Tuple) -> Tuple[Any, A
 
 
 def extractROIsFromPCAICA(spcomps, numSTD=4, gaussiansigmax=2, gaussiansigmay=2,
-                          thresh=None) -> Tuple[List[np.array], List]:
+                          thresh=None) -> tuple[list[np.array], list]:
     """
     Given the spatial components output of the IPCA_stICA function extract possible regions of interest
 
@@ -1285,6 +1259,7 @@ def detect_duplicates_and_subsets(binary_masks,
                                   dist_thr: float = 0.1,
                                   min_dist=10,
                                   thresh_subset: float = 0.8):
+    logger = logging.getLogger("caiman")
 
     cm = [scipy.ndimage.center_of_mass(mm) for mm in binary_masks]
     sp_rois = scipy.sparse.csc_matrix(np.reshape(binary_masks, (binary_masks.shape[0], -1)).T)
@@ -1292,7 +1267,7 @@ def detect_duplicates_and_subsets(binary_masks,
     np.fill_diagonal(D, 1)
     overlap = sp_rois.T.dot(sp_rois).toarray()
     sz = np.array(sp_rois.sum(0))
-    logging.info(sz.shape)
+    logger.info(sz.shape)
     overlap = overlap / sz.T
     np.fill_diagonal(overlap, 0)
     # pairs of duplicate indices
@@ -1307,7 +1282,7 @@ def detect_duplicates_and_subsets(binary_masks,
         metric = r_values.squeeze()
     else:
         metric = sz.squeeze()
-        logging.debug('***** USING MAX AREA BY DEFAULT')
+        logger.debug('***** USING MAX AREA BY DEFAULT')
 
     overlap_tmp = overlap.copy() >= thresh_subset
     overlap_tmp = overlap_tmp * metric[:, None]
@@ -1316,7 +1291,7 @@ def detect_duplicates_and_subsets(binary_masks,
     one, two = np.unravel_index(max_idx, overlap_tmp.shape)
     max_val = overlap_tmp[one, two]
 
-    indices_to_keep: List = []
+    indices_to_keep:list = []
     indices_to_remove = []
     while max_val > 0:
         one, two = np.unravel_index(max_idx, overlap_tmp.shape)
@@ -1374,7 +1349,7 @@ def detect_duplicates_and_subsets(binary_masks,
     return indices_orig, indices_to_keep, indices_to_remove, D, overlap
 
 
-def detect_duplicates(file_name: str, dist_thr: float = 0.1, FOV: Tuple[int, ...] = (512, 512)) -> Tuple[List, List]:
+def detect_duplicates(file_name:str, dist_thr:float = 0.1, FOV:tuple[int, ...] = (512, 512)) -> tuple[list, list]:
     """
     Removes duplicate ROIs from file file_name
 
