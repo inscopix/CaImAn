@@ -1,44 +1,36 @@
 #!/usr/bin/env python
 
 """
-Created on Wed Aug 05 20:38:27 2015
-
-# -*- coding: utf-8 -*-
-@author: agiovann
+Functions for managing spatial components
 """
 
-# noinspection PyCompatibility
 import cv2
 import logging
 import numpy as np
 import os
+import psutil
 import scipy
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix
 from scipy.sparse import spdiags
 from scipy.linalg import eig
-from scipy.ndimage import label, binary_dilation
-from scipy.ndimage.filters import median_filter
-from scipy.ndimage.morphology import binary_closing
-from scipy.ndimage.morphology import generate_binary_structure, iterate_structure
+from scipy.ndimage import (
+    binary_dilation,
+    binary_closing,
+    generate_binary_structure,
+    grey_dilation,
+    iterate_structure,
+    label,
+    median_filter
+)
 import shutil
 from sklearn.decomposition import NMF
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 import tempfile
 import time
-import psutil
-from typing import List
 
-from ...mmapping import load_memmap, parallel_dot_product
-from ...utils.stats import csc_column_remove
-
-
-def basis_denoising(y, c, boh, sn, id2_, px):
-    if np.size(c) > 0:
-        _, _, a, _, _ = lars_regression_noise(y, c, 1, sn) # FIXME Undefined function
-    else:
-        return (None, None, None)
-    return a, px, id2_
+import caiman.mmapping
+import caiman.utils.stats
 
 def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
                               min_size=3, max_size=8, dist=3,
@@ -49,7 +41,7 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
                               se=np.ones((3, 3), dtype=int),
                               ss=np.ones((3, 3), dtype=int), nb=1,
                               method_ls='lasso_lars', update_background_components=True,
-                              low_rank_background=True, block_size_spat=1000,
+                              low_rank_background=True,
                               num_blocks_per_run_spat=20):
     """update spatial footprints and background through Basis Pursuit Denoising
 
@@ -93,7 +85,6 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
             'ipyparallel', 'single_thread'
             single_thread:no parallelization. It can be used with small datasets.
             ipyparallel: uses ipython clusters and then send jobs to each of them
-            SLURM: use the slurm scheduler
 
         n_pixels_per_process: [optional] int
             number of pixels to be processed by each thread
@@ -161,7 +152,9 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
 
         Exception "Failed to delete: " + folder
     """
-    #logging.info('Initializing update of Spatial Components')
+    logger = logging.getLogger("caiman")
+    # TODO fix documentation on backend
+    logger.info('Initializing update of Spatial Components')
 
     if expandCore is None:
         expandCore = iterate_structure(
@@ -175,7 +168,7 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
         Y, A_in, C, f, n_pixels_per_process, nb)
 
     start_time = time.time()
-    logging.info('Computing support of spatial components')
+    logger.info('Computing support of spatial components')
     # we compute the indicator from distance indicator
     ind2_, nr, C, f, b_, A_in = computing_indicator(
         Y, A_in, b_in, C, f, nb, method_exp, dims, min_size, max_size, dist, expandCore, dview)
@@ -183,8 +176,8 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
     # remove components that are empty or have a nan
     ff = np.where((np.sum(C, axis=1)==0) + np.isnan(np.sum(C, axis=1)))[0]
     if np.size(ff) > 0:
-        logging.info("Eliminating empty and nan components: {}".format(ff))
-        A_in = csc_column_remove(A_in, list(ff))
+        logger.info(f"Eliminating empty and nan components: {ff}")
+        A_in = caiman.utils.stats.csc_column_remove(A_in, list(ff))
         C = np.delete(C, list(ff), 0)
         # update indices
         ind_list = list(range(nr-np.size(ff)))
@@ -204,13 +197,13 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
     if b_in is None:
         b_in = b_
 
-    logging.info('Memory mapping')
+    logger.info('Memory mapping')
     # we create a memory map file if not already the case, we send Cf, a
     # matrix that include background components
     C_name, Y_name, folder = creatememmap(Y, np.vstack((C, f)), dview)
 
     # we create a pixel group array (chunks for the cnmf)for the parallelization of the process
-    logging.info('Updating Spatial Components using lasso lars')
+    logger.info('Updating Spatial Components using lasso lars')
     cct = np.diag(C.dot(C.T))
     pixel_groups = []
     for i in range(0, np.prod(dims) - n_pixels_per_process + 1, n_pixels_per_process):
@@ -230,9 +223,9 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
             dview.results.clear()
     else:
         parallel_result = list(map(regression_ipyparallel, pixel_groups))
-    data:List = []
-    rows:List = []
-    cols:List = []
+    data:list = []
+    rows:list = []
+    cols:list = []
     for chunk in parallel_result:
         for pars in chunk:
             px, idxs_, a = pars
@@ -243,15 +236,15 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
             cols.extend(idxs_[nz])
     A_ = scipy.sparse.coo_matrix((data, (rows, cols)), shape=(d, nr + np.size(f, 0)))
 
-    logging.info("thresholding components")
+    logger.info("thresholding components")
     A_ = threshold_components(A_, dims, dview=dview, medw=medw, thr_method=thr_method,
                               maxthr=maxthr, nrgthr=nrgthr, extract_cc=extract_cc, se=se, ss=ss)
     #ff = np.where(np.sum(A_, axis=0) == 0)  # remove empty components
     ff = np.asarray(A_.sum(0) == 0).nonzero()[1]
     if np.size(ff) > 0:
-        logging.info('removing {0} empty spatial component(s)'.format(ff.shape[0]))
+        logger.info(f'removing {ff.shape[0]} empty spatial component(s)')
         if any(ff < nr):
-            A_ = csc_column_remove(A_, list(ff[ff < nr]))
+            A_ = caiman.utils.stats.csc_column_remove(A_, list(ff[ff < nr]))
             C = np.delete(C, list(ff[ff < nr]), 0)
             ff -= nr
             nr = nr - len(ff[ff < nr])
@@ -266,11 +259,11 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
     A_ = A_[:, :nr]    
     if update_background_components:
         A_ = csr_matrix(A_)
-        logging.info("Computing residuals")
+        logger.info("Computing residuals")
         if 'memmap' in str(type(Y)):
             bl_siz1 = Y.shape[0] // (num_blocks_per_run_spat - 1)
             bl_siz2 = psutil.virtual_memory().available // (4*Y.shape[-1]*(num_blocks_per_run_spat + 1))
-            Y_resf = parallel_dot_product(Y, f.T, dview=dview, block_size=min(bl_siz1, bl_siz2), num_blocks_per_run=num_blocks_per_run_spat) - \
+            Y_resf = caiman.mmapping.parallel_dot_product(Y, f.T, dview=dview, block_size=min(bl_siz1, bl_siz2), num_blocks_per_run=num_blocks_per_run_spat) - \
                 A_.dot(C[:nr].dot(f.T))
         else:
             # Y*f' - A*(C*f')
@@ -293,11 +286,11 @@ def update_spatial_components(Y, C=None, f=None, A_in=None, sn=None, dims=None,
         # except NameError:
         b = b_in
     # print(("--- %s seconds ---" % (time.time() - start_time)))
-    logging.info('Updating done in ' + 
+    logger.info('Updating done in ' + 
                  '{0}s'.format(str(time.time() - start_time).split(".")[0]))
     try:  # clean up
         # remove temporary file created
-        logging.info("Removing created tempfiles")
+        logger.info("Removing created tempfiles")
         shutil.rmtree(folder)
     except:
         raise Exception("Failed to delete: " + folder)
@@ -368,7 +361,7 @@ def regression_ipyparallel(pars):
     Y_name, C_name, noise_sn, idxs_C, idxs_Y, method_least_square, cct = pars
     # we load from the memmap file
     if isinstance(Y_name, str):
-        Y, _, _ = load_memmap(Y_name)
+        Y, _, _ = caiman.mmapping.load_memmap(Y_name)
         Y = np.array(Y[idxs_Y, :])
     else:
         Y = Y_name[idxs_Y, :]
@@ -499,7 +492,7 @@ def threshold_components(A, dims, medw=None, thr_method='max', maxthr=0.1, nrgth
         ss = np.ones((3,) * len(dims), dtype='uint8')
     # dims and nm of neurones
     d, nr = np.shape(A)
-    # instanciation of A thresh.
+    # instantiation of A thresh.
     #Ath = np.zeros((d, nr))
     pars = []
     # for each neurons
@@ -513,14 +506,14 @@ def threshold_components(A, dims, medw=None, thr_method='max', maxthr=0.1, nrgth
             res = dview.map_async(
                 threshold_components_parallel, pars).get(4294967)
         else:
-            res = dview.map_async(threshold_components_parallel, pars)
+            res = dview.map_sync(threshold_components_parallel, pars)
     else:
         res = list(map(threshold_components_parallel, pars))
 
     res.sort(key=lambda x: x[1])
-    indices:List = []
+    indices:list = []
     indptr = [0]
-    data:List = []
+    data:list = []
     for r in res:
         At, i = r
         indptr.append(indptr[-1]+At.indptr[-1])
@@ -539,7 +532,7 @@ def threshold_components_parallel(pars):
        (ii) Thresholding
        (iii) Morphological closing of spatial support
        (iv) Extraction of largest connected component ( to remove small unconnected pixel )
-       /!\ need to be called through the function threshold components
+       ! need to be called through the function threshold components
 
        Args:
            [parsed] - A list of actual parameters:
@@ -850,7 +843,7 @@ def determine_search_location(A, dims, method='ellipse', min_size=3, max_size=8,
         Exception 'You cannot pass empty (all zeros) components!'
     """
 
-    from scipy.ndimage.morphology import grey_dilation
+    logger = logging.getLogger("caiman")
 
     # we initialize the values
     if len(dims) == 2:
@@ -875,7 +868,7 @@ def determine_search_location(A, dims, method='ellipse', min_size=3, max_size=8,
             Coor['z'] = np.kron(list(range(d3)), np.ones(d2 * d1))
         if not dist == np.inf:  # determine search area for each neuron
             cm = np.zeros((nr, len(dims)))  # vector for center of mass
-            Vr:List = []  # cell(nr,1);
+            Vr:list = []  # cell(nr,1);
             dist_indicator = []
             pars = []
             # for each dim
@@ -906,7 +899,7 @@ def determine_search_location(A, dims, method='ellipse', min_size=3, max_size=8,
 
     elif method == 'dilate':
         indptr = [0]
-        indices:List = []
+        indices:list = []
         data = []
         if dview is None:
             for i in range(nr):
@@ -927,7 +920,7 @@ def determine_search_location(A, dims, method='ellipse', min_size=3, max_size=8,
             dist_indicator = csc_matrix((data, indices, indptr), shape=(d, nr))
 
         else:
-            logging.info('dilate in parallel...')
+            logger.info('dilate in parallel...')
             pars = []
             for i in range(nr):
                 pars.append([A[:, i], dims, expandCore, d])
@@ -1136,7 +1129,7 @@ def creatememmap(Y, Cf, dview):
         else:
             Y_name = os.path.join(folder, 'Y_temp.npy')
             np.save(Y_name, Y)
-            Y, _, _, _ = load_memmap(Y_name)
+            Y, _, _, _ = caiman.mmapping.load_memmap(Y_name)
             raise Exception('Not implemented consistently')
     return C_name, Y_name, folder
 

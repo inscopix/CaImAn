@@ -1,18 +1,8 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
-Function for implementing parallel scalable segmentation of two photon imaging data
-
-..image::docs/img/cnmf1.png
-
-
-@author: agiovann
+Functions for implementing parallel scalable segmentation of two photon imaging data
 """
-#\package caiman/dource_ectraction/cnmf
-#\version   1.0
-#\copyright GNU General Public License v2.0
-#\date Created on Wed Feb 17 14:58:26 2016
 
 from copy import copy, deepcopy
 import logging
@@ -21,12 +11,10 @@ import os
 import scipy
 from sklearn.decomposition import NMF
 import time
-from typing import Set
 
-from ...mmapping import load_memmap
-from ...cluster import extract_patch_coordinates
+from caiman.cluster import extract_patch_coordinates
+from caiman.mmapping import load_memmap
 
-#%%
 def cnmf_patches(args_in):
     """Function that is run for each patches
 
@@ -36,7 +24,7 @@ def cnmf_patches(args_in):
             file_name: string
                 full path to an npy file (2D, pixels x time) containing the movie
 
-            shape: tuple of thre elements
+            shape: tuple of three elements
                 dimensions of the original movie across y, x, and time
 
             params:
@@ -52,21 +40,21 @@ def cnmf_patches(args_in):
                 number of global background components
 
             backend: string
-                'ipyparallel' or 'single_thread' or SLURM
+                'ipyparallel' or 'single_thread'
 
             n_processes: int
-                nuber of cores to be used (should be less than the number of cores started with ipyparallel)
+                number of cores to be used (should be less than the number of cores started with ipyparallel)
 
             memory_fact: double
                 unitless number accounting how much memory should be used.
-                It represents the fration of patch processed in a single thread.
+                It represents the fraction of patch processed in a single thread.
                  You will need to try different values to see which one would work
 
             low_rank_background: bool
                 if True the background is approximated with gnb components. If false every patch keeps its background (overlaps are randomly assigned to one spatial component only)
 
         Returns:
-            A_tot: matrix containing all the componenents from all the patches
+            A_tot: matrix containing all the components from all the patches
 
             C_tot: matrix containing the calcium traces corresponding to A_tot
 
@@ -78,23 +66,17 @@ def cnmf_patches(args_in):
             Empty Exception
         """
 
-    import logging
-    from . import cnmf
+    #FIXME Fix in-function imports
+    from caiman.source_extraction.cnmf import CNMF
+    logger = logging.getLogger("caiman")
     file_name, idx_, shapes, params = args_in
 
-    logger = logging.getLogger(__name__)
     name_log = os.path.basename(
         file_name[:-5]) + '_LOG_ ' + str(idx_[0]) + '_' + str(idx_[-1])
-    # logger = logging.getLogger(name_log)
-    # hdlr = logging.FileHandler('./' + name_log)
-    # formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    # hdlr.setFormatter(formatter)
-    # logger.addHandler(hdlr)
-    # logger.setLevel(logging.INFO)
 
-    logger.debug(name_log + 'START')
+    logger.debug(name_log + ' START')
 
-    logger.debug(name_log + 'Read file')
+    logger.debug(name_log + ' Read file')
     Yr, dims, timesteps = load_memmap(file_name)
 
     # slicing array (takes the min and max index in n-dimensional space and
@@ -125,7 +107,7 @@ def cnmf_patches(args_in):
         for group in ('preprocess', 'temporal'):
             opts.set(group, {'p': params.get('patch', 'p_patch')})
 
-        cnm = cnmf.CNMF(n_processes=1, params=opts)
+        cnm = CNMF(n_processes=1, params=opts)
 
         cnm = cnm.fit(images)
         return [idx_, shapes, scipy.sparse.coo_matrix(cnm.estimates.A),
@@ -135,8 +117,6 @@ def cnmf_patches(args_in):
                 cnm.params.to_dict(), cnm.estimates.YrA]
     else:
         return None
-# %%
-
 
 def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
                      memory_fact=1, border_pix=0, low_rank_background=True,
@@ -168,7 +148,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
 
         memory_fact: double
             unitless number accounting how much memory should be used.
-            It represents the fration of patch processed in a single thread.
+            It represents the fraction of patch processed in a single thread.
              You will need to try different values to see which one would work
 
         border_pix: int
@@ -204,6 +184,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
     Raises:
         Empty Exception
     """
+    logger = logging.getLogger("caiman")
 
     dims = shape[:-1]
     d = np.prod(dims)
@@ -243,7 +224,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
             foo[id_f] = 1
             patch_centers.append(scipy.ndimage.center_of_mass(
                 foo.reshape(dims, order='F')))
-    logging.info('Patch size: {0}'.format(id_2d))
+    logger.info(f'Patch size: {id_2d}')
     st = time.time()
     if dview is not None:
         if 'multiprocessing' in str(type(dview)):
@@ -256,12 +237,12 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
                 print('Something went wrong')
                 raise
             finally:
-                logging.info('Patch processing complete')
+                logger.info('Patch processing complete')
 
     else:
         file_res = list(map(cnmf_patches, args_in))
 
-    logging.info('Elapsed time for processing patches: \
+    logger.info('Elapsed time for processing patches: \
                  {0}s'.format(str(time.time() - st).split('.')[0]))
     # count components
     count = 0
@@ -323,7 +304,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
 
     # instead of filling in the matrices, construct lists with their non-zero
     # entries and coordinates
-    logging.info('Embedding patches results into whole FOV')
+    logger.info('Embedding patches results into whole FOV')
     for fff in file_res:
         if fff is not None:
 
@@ -379,7 +360,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
         else:
             empty += 1
 
-    logging.debug('Skipped %d empty patches', empty)
+    logger.debug(f'Skipped {empty} empty patches')
     if count_bgr > 0:
         idx_tot_B = np.concatenate(idx_tot_B)
         b_tot = np.concatenate(b_tot)
@@ -415,7 +396,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
     optional_outputs['F'] = F_tot
     optional_outputs['mask'] = mask
 
-    logging.info("Constructing background")
+    logger.info("Constructing background")
 
     Im = scipy.sparse.csr_matrix(
         (1. / (mask + np.finfo(np.float32).eps), (np.arange(d), np.arange(d))), dtype=np.float32)
@@ -429,9 +410,9 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
     elif low_rank_background is None:
         b = Im.dot(B_tot)
         f = F_tot
-        logging.info("Leaving background components intact")
+        logger.info("Leaving background components intact")
     elif low_rank_background:
-        logging.info("Compressing background components with a low rank NMF")
+        logger.info("Compressing background components with a low rank NMF")
         B_tot = Im.dot(B_tot)
         Bm = (B_tot)
         #f = np.r_[np.atleast_2d(np.mean(F_tot, axis=0)),
@@ -464,7 +445,7 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
 #        B_tot = scipy.sparse.coo_matrix(B_tot)
         f *= nB[:, None]
     else:
-        logging.info('Removing overlapping background components \
+        logger.info('Removing overlapping background components \
                      from different patches')
         nA = np.ravel(np.sqrt(A_tot.power(2).sum(0)))
         A_tot /= nA
@@ -477,9 +458,9 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
 #        B_tot = scipy.sparse.coo_matrix(B_tot)
         F_tot *= nB[:, None]
 
-        processed_idx:Set = set([])
+        processed_idx:set = set([])
         # needed if a patch has more than 1 background component
-        processed_idx_prev:Set = set([])
+        processed_idx_prev:set = set([])
         for _b in np.arange(B_tot.shape[-1]):
             idx_mask = np.where(B_tot[:, _b])[0]
             idx_mask_repeat = processed_idx.intersection(idx_mask)
@@ -494,8 +475,8 @@ def run_CNMF_patches(file_name, shape, params, gnb=1, dview=None,
         b = B_tot
         f = F_tot
 
-        logging.info('using one background component per patch')
+        logger.info('using one background component per patch')
 
-    logging.info("Constructing background DONE")
+    logger.info("Constructing background DONE")
 
     return A_tot, C_tot, YrA_tot, b, f, sn_tot, optional_outputs

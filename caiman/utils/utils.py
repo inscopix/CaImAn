@@ -11,6 +11,7 @@ https://docs.python.org/3/library/urllib.request.htm
 """
 
 import certifi
+import contextlib
 import cv2
 import h5py
 import multiprocessing
@@ -24,9 +25,10 @@ import scipy
 import ssl
 import subprocess
 import tensorflow as tf
-from scipy.ndimage.filters import gaussian_filter
+import time
+from scipy.ndimage import gaussian_filter
 from tifffile import TiffFile
-from typing import Any, Dict, List, Tuple, Union, Iterable
+from typing import Any, Union, Iterable
 from urllib.request import urlopen
 
 try:
@@ -35,13 +37,12 @@ except:
     pass
 
 
-from ..external.cell_magic_wand import cell_magic_wand
-from ..source_extraction.cnmf.spatial import threshold_components
+import caiman
+import caiman.external.cell_magic_wand
+import caiman.paths
 from caiman.paths import caiman_datadir
+import caiman.source_extraction.cnmf.spatial
 import caiman.utils
-
-#%%
-
 
 def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
     """download a file from the file list with the url of its location
@@ -60,9 +61,7 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
     Raise:
         WrongFolder Exception
     """
-
-    #\bug
-    #\warning
+    logger = logging.getLogger("caiman")
 
     file_dict = {
 		'Sue_2x_3000_40_-46.tif': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/Sue_2x_3000_40_-46.tif',
@@ -87,7 +86,7 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
                 'msCam13.avi': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/msCam13.avi',
                 'online_vs_offline.npz': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/online_vs_offline.npz',
 		}
-                 #          ,['./example_movies/demoMovie.tif','https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/demoMovie.tif']]
+
     base_folder = os.path.join(caiman_datadir(), 'example_movies')
     if os.path.exists(base_folder):
         if not os.path.isdir(os.path.join(base_folder, save_folder)):
@@ -95,8 +94,8 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
         path_movie = os.path.join(base_folder, save_folder, name)
         if not os.path.exists(path_movie):
             url = file_dict[name]
-            logging.info(f"downloading {name} with urllib")
-            logging.info(f"GET {url} HTTP/1.1")
+            logger.info(f"downloading {name} with urllib")
+            logger.info(f"GET {url} HTTP/1.1")
             if os.name == 'nt':
                 urllib_context = ssl.create_default_context(cafile = certifi.where() ) # On windows we need to avoid the limited default cert store
             else:
@@ -104,7 +103,7 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
             try:
                 f = urlopen(url, context=urllib_context)
             except:
-                logging.info(f"Trying to set user agent to download demo")
+                logger.info(f"Trying to set user agent to download demo")
                 from urllib.request import Request
                 req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 f = urlopen(req, context=urllib_context)
@@ -113,7 +112,7 @@ def download_demo(name:str='Sue_2x_3000_40_-46.tif', save_folder:str='') -> str:
             with open(path_movie, "wb") as code:
                 code.write(data)
         else:
-            logging.info(f"File {name} already downloaded")
+            logger.info(f"File {name} already downloaded")
     else:
         raise Exception('Cannot find the example_movies folder in your caiman_datadir - did you make one with caimanmanager?')
     return path_movie
@@ -136,9 +135,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
     Raise:
         WrongFolder Exception
     """
-
-    #\bug
-    #\warning
+    logger = logging.getLogger("caiman")
 
     file_dict = {'mask_rcnn': 'https://caiman.flatironinstitute.org/~neuro/caiman_downloadables/model/mask_rcnn_neurons_0040.h5'}
     base_folder = os.path.join(caiman_datadir(), 'model')
@@ -148,8 +145,8 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
         path_movie = os.path.join(base_folder, save_folder, name)
         if not os.path.exists(path_movie):
             url = file_dict[name]
-            logging.info(f"downloading {name} with urllib")
-            logging.info(f"GET {url} HTTP/1.1")
+            logger.info(f"downloading {name} with urllib")
+            logger.info(f"GET {url} HTTP/1.1")
             if os.name == 'nt':
                 urllib_context = ssl.create_default_context(cafile = certifi.where() ) # On windows we need to avoid the limited default cert store
             else:
@@ -157,7 +154,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
             try:
                 f = urlopen(url, context=urllib_context)
             except:
-                logging.info(f"Trying to set user agent to download demo")
+                logger.info(f"Trying to set user agent to download demo")
                 from urllib.request import Request
                 req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 f = urlopen(req, context=urllib_context)
@@ -166,7 +163,7 @@ def download_model(name:str='mask_rcnn', save_folder:str='') -> str:
             with open(path_movie, "wb") as code:
                 code.write(data)
         else:
-            logging.info("File " + str(name) + " already downloaded")
+            logger.info("File " + str(name) + " already downloaded")
     else:
         raise Exception('Cannot find the model folder in your caiman_datadir - did you make one with caimanmanager?')
     return path_movie
@@ -198,7 +195,7 @@ def val_parse(v):
             return v
 
 
-def si_parse(imd:str) -> Dict:
+def si_parse(imd:str) -> dict:
     """parse image_description field embedded by scanimage from get image description
 
      Args:
@@ -217,7 +214,7 @@ def si_parse(imd:str) -> Dict:
     return imddata
 
 
-def get_image_description_SI(fname:str) -> List:
+def get_image_description_SI(fname:str) -> list:
     """Given a tif file acquired with Scanimage it returns a dictionary containing the information in the image description field
 
      Args:
@@ -225,6 +222,7 @@ def get_image_description_SI(fname:str) -> List:
      Returns:
         image_description: information of the image
     """
+    logger = logging.getLogger("caiman")
 
     image_descriptions = []
 
@@ -232,7 +230,7 @@ def get_image_description_SI(fname:str) -> List:
 
     for idx, pag in enumerate(tf.pages):
         if idx % 1000 == 0:
-            logging.debug(idx) # progress report to the user
+            logger.debug(idx) # progress report to the user
         field = pag.tags['image_description'].value
 
         image_descriptions.append(si_parse(field))
@@ -240,10 +238,10 @@ def get_image_description_SI(fname:str) -> List:
     return image_descriptions
 
 
-#%% Generate data
-def gen_data(dims:Tuple[int,int]=(48, 48), N:int=10, sig:Tuple[int,int]=(3, 3), tau:float=1., noise:float=.3, T:int=2000,
+# Generate data
+def gen_data(dims:tuple[int,int]=(48, 48), N:int=10, sig:tuple[int,int]=(3, 3), tau:float=1., noise:float=.3, T:int=2000,
              framerate:int=30, firerate:float=.5, seed:int=3, cmap:bool=False, truncate:float=np.exp(-2),
-             difference_of_Gaussians:bool=True, fluctuating_bkgrd:List=[50, 300]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Tuple[int, int]]:
+             difference_of_Gaussians:bool=True, fluctuating_bkgrd:list=[50, 300]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[int, int]]:
     bkgrd = 10  # fluorescence baseline
     np.random.seed(seed)
     boundary = 4
@@ -309,9 +307,8 @@ def gen_data(dims:Tuple[int,int]=(48, 48), N:int=10, sig:Tuple[int,int]=(3, 3), 
         * (np.prod(dims), T)).astype('float32') + trueA.dot(trueC)
 
     if cmap:
-        import caiman as cm
         Y = np.reshape(Yr, dims + (T,), order='F')
-        Cn = cm.local_correlations(Y)
+        Cn = caiman.local_correlations(Y)
         plt.figure(figsize=(20, 3))
         plt.plot(trueC.T)
         plt.figure(figsize=(20, 3))
@@ -336,8 +333,6 @@ def gen_data(dims:Tuple[int,int]=(48, 48), N:int=10, sig:Tuple[int,int]=(3, 3), 
         plt.show()
     return Yr, trueC, trueS, trueA, trueb, truef, centers, dims # XXX dims is always the same as passed into the function?
 
-
-#%%
 def save_object(obj, filename:str) -> None:
     with open(filename, 'wb') as output:
         pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
@@ -347,7 +342,7 @@ def load_object(filename:str) -> Any:
     with open(filename, 'rb') as input_obj:
         obj = pickle.load(input_obj)
     return obj
-#%%
+
 def apply_magic_wand(A, gSig, dims, A_thr=None, coms=None, dview=None,
                      min_frac=0.7, max_frac=1.0, roughness=2, zoom_factor=1,
                      center_range=2) -> np.ndarray:
@@ -379,14 +374,15 @@ def apply_magic_wand(A, gSig, dims, A_thr=None, coms=None, dview=None,
         masks: ndarray
             binary masks
     """
+    logger = logging.getLogger("caiman")
 
     if (A_thr is None) and (coms is None):
         import pdb
         pdb.set_trace()
-        A_thr = threshold_components(
+        A_thr = caiman.source_extraction.cnmf.spatial.threshold_components(
                         A.tocsc()[:], dims, medw=None, thr_method='max',
                         maxthr=0.2, nrgthr=0.99, extract_cc=True,se=None,
-                        ss=None, dview=dview)>0
+                        ss=None, dview=dview) > 0
 
         coms = [scipy.ndimage.center_of_mass(mm.reshape(dims, order='F')) for
                 mm in A_thr.T]
@@ -404,7 +400,7 @@ def apply_magic_wand(A, gSig, dims, A_thr=None, coms=None, dview=None,
         params.append([A.tocsc()[:,idx].toarray().reshape(dims, order='F'),
             coms[idx], min_radius, max_radius, roughness, zoom_factor, center_range])
 
-    logging.debug(len(params))
+    logger.debug(len(params))
 
     if dview is not None:
         masks = np.array(list(dview.map(cell_magic_wand_wrapper, params)))
@@ -416,13 +412,18 @@ def apply_magic_wand(A, gSig, dims, A_thr=None, coms=None, dview=None,
 
 def cell_magic_wand_wrapper(params):
     a, com, min_radius, max_radius, roughness, zoom_factor, center_range = params
-    msk = cell_magic_wand(a, com, min_radius, max_radius, roughness,
-                          zoom_factor, center_range)
+    msk = caiman.external.cell_magic_wand.cell_magic_wand(
+        a,
+        com,
+        min_radius,
+        max_radius,
+        roughness,
+        zoom_factor,
+        center_range)
     return msk
-#%% From https://codereview.stackexchange.com/questions/120802/recursively-save-python-dictionaries-to-hdf5-files-using-h5py
 
 
-def save_dict_to_hdf5(dic:Dict, filename:str, subdir:str='/') -> None:
+def save_dict_to_hdf5(dic:dict, filename:str, subdir:str='/') -> None:
     ''' Save dictionary to hdf5 file
     Args:
         dic: dictionary
@@ -430,11 +431,12 @@ def save_dict_to_hdf5(dic:Dict, filename:str, subdir:str='/') -> None:
         filename: str
             file name to save the dictionary to (in hdf5 format for now)
     '''
+    # From https://codereview.stackexchange.com/questions/120802/recursively-save-python-dictionaries-to-hdf5-files-using-h5py
 
     with h5py.File(filename, 'w') as h5file:
         recursively_save_dict_contents_to_group(h5file, subdir, dic)
 
-def load_dict_from_hdf5(filename:str) -> Dict:
+def load_dict_from_hdf5(filename:str) -> dict:
     ''' Load dictionary from hdf5 file
 
     Args:
@@ -448,7 +450,7 @@ def load_dict_from_hdf5(filename:str) -> Dict:
         return recursively_load_dict_contents_from_group(h5file, '/')
 
 
-def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict) -> None:
+def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:dict) -> None:
     '''
     Args:
         h5file: hdf5 object
@@ -458,6 +460,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
         dic: dictionary
             dictionary to save
     '''
+    logger = logging.getLogger("caiman")
     # argument type checking
     if not isinstance(dic, dict):
         raise ValueError("must provide a dictionary")
@@ -474,7 +477,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
         if key == 'g':
             if item is None:
                 item = 0
-            logging.info(key + ' is an object type')
+            logger.info(f'{key} is an object type')
             try:
                 item = np.array(list(item))
             except:
@@ -484,7 +487,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
         if key in ['groups', 'idx_tot', 'ind_A', 'Ab_epoch', 'coordinates',
                    'loaded_model', 'optional_outputs', 'merged_ROIs', 'tf_in',
                    'tf_out', 'empty_merged']:
-            logging.info(f'Key {key} is not saved')
+            logger.info(f'Key {key} is not saved')
             continue
 
         if isinstance(item, (list, tuple)):
@@ -502,12 +505,12 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
         elif isinstance(item, (np.int64, np.int32, np.float64, float, np.float32, int)):
             # TODO In the future we may store all scalars, including these, as attributes too, although strings suffer the most from being stored as datasets
             h5file[path + key] = item
-            logging.debug(f'Saving numeric {path + key}')
+            logger.debug(f'Saving numeric {path + key}')
             if not h5file[path + key][()] == item:
                 raise ValueError(f'Error (v {h5py.__version__}) while saving numeric {path + key}: assigned value {h5file[path + key][()]} does not match intended value {item}')
         # save numpy arrays
         elif isinstance(item, np.ndarray):
-            logging.debug(f'Saving {key}')
+            logger.debug(f'Saving {key}')
             try:
                 h5file[path + key] = item
             except:
@@ -519,7 +522,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
         elif isinstance(item, dict):
             recursively_save_dict_contents_to_group(h5file, path + key + '/', item)
         elif 'sparse' in str(type(item)):
-            logging.info(key + ' is sparse ****')
+            logger.info(f'{key} is sparse ****')
             h5file[path + key + '/data'] = item.tocsc().data
             h5file[path + key + '/indptr'] = item.tocsc().indptr
             h5file[path + key + '/indices'] = item.tocsc().indices
@@ -529,7 +532,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
             h5file[path + key] = 'NoneType'
         elif key in ['dims', 'medw', 'sigma_smooth_snmf', 'dxy', 'max_shifts',
                      'strides', 'overlaps', 'gSig']:
-            logging.info(key + ' is a tuple ****')
+            logger.info(f'{key} is a tuple ****')
             h5file[path + key] = np.array(item)
         elif type(item).__name__ in ['CNMFParams', 'Estimates']: #  parameter object
             recursively_save_dict_contents_to_group(h5file, path + key + '/', item.__dict__)
@@ -537,7 +540,7 @@ def recursively_save_dict_contents_to_group(h5file:h5py.File, path:str, dic:Dict
             raise ValueError(f"Cannot save {type(item)} type for key '{key}'.")
 
 
-def recursively_load_dict_contents_from_group(h5file:h5py.File, path:str) -> Dict:
+def recursively_load_dict_contents_from_group(h5file:h5py.File, path:str) -> dict:
     ''' load dictionary from hdf5 object
     Args:
         h5file: hdf5 object
@@ -554,38 +557,29 @@ def recursively_load_dict_contents_from_group(h5file:h5py.File, path:str) -> Dic
     so all the fields end up with appropriate data types.
     '''
 
-    ans:Dict = {}
+    ans:dict = {}
     for akey, aitem in h5file[path].attrs.items():
         ans[akey] = aitem
 
     for key, item in h5file[path].items():
         if isinstance(item, h5py._hl.dataset.Dataset):
-            val_set = np.nan
-            if isinstance(item[()], str):
-                if item[()] == 'NoneType':
-                    ans[key] = None
-                else:
-                    ans[key] = item[()]
-
-            elif key in ['dims', 'medw', 'sigma_smooth_snmf', 'dxy', 'max_shifts', 'strides', 'overlaps']:
-                if isinstance(item[()], np.ndarray):
-                    ans[key] = tuple(item[()])
-                else:
-                    ans[key] = item[()]
+            val = item[()]
+            if isinstance(val, str) and val == 'NoneType' or isinstance(val, bytes) and val == b'NoneType':
+                ans[key] = None
+            elif key in ['dims', 'medw', 'sigma_smooth_snmf',
+                         'dxy', 'max_shifts', 'strides', 'overlaps'] and isinstance(val, np.ndarray):
+                    ans[key] = tuple(val)
+            elif isinstance(val, np.bool_): # sigh
+                ans[key] = bool(val)
             else:
-                if isinstance(item[()], np.bool_): # sigh
-                    ans[key] = bool(item[()])
-                else:
-                    ans[key] = item[()]
-                    if isinstance(ans[key], bytes) and ans[key] == b'NoneType':
-                        ans[key] = None
+                ans[key] = item[()]
 
         elif isinstance(item, h5py._hl.group.Group):
             if key in ('A', 'W', 'Ab', 'downscale_matrix', 'upscale_matrix'):
-                data =  item[path + key + '/data']
+                data    = item[path + key + '/data']
                 indices = item[path + key + '/indices']
-                indptr = item[path + key + '/indptr']
-                shape = item[path + key + '/shape']
+                indptr  = item[path + key + '/indptr']
+                shape   = item[path + key + '/shape']
                 ans[key] = scipy.sparse.csc_matrix((data[:], indices[:],
                     indptr[:]), shape[:])
                 if key in ('W', 'upscale_matrix'):
@@ -641,14 +635,14 @@ def load_graph(frozen_graph_filename):
         )
     return graph
 
-def get_caiman_version() -> Tuple[str, str]:
+def get_caiman_version() -> tuple[str, str]:
     """ Get the version of CaImAn, as best we can determine"""
     # This does its best to determine the version of CaImAn. This uses the first successful
     # from these methods:
-    # 'GITW' ) git rev-parse if caiman is built from "pip install -e ." and we are working
+    # 'GITW') git rev-parse if caiman is built from "pip install -e ." and we are working
     #    out of the checkout directory (the user may have since updated without reinstall)
     # 'RELF') A release file left in the process to cut a release. Should have a single line
-    #    in it whick looks like "Version:1.4"
+    #    in it which looks like "Version:1.4"
     # 'FILE') The date of some frequently changing files, which act as a very rough
     #    approximation when no other methods are possible
     #
@@ -673,7 +667,7 @@ def get_caiman_version() -> Tuple[str, str]:
             for line in sfh:
                 if ':' in line: # expect a line like "Version:1.3"
                     _, version = line.rstrip().split(':')
-                    return 'RELF', version 
+                    return 'RELEASE', version 
 
     # Attempt: 'FILE'
     # Right now this samples the utils directory
@@ -684,4 +678,19 @@ def get_caiman_version() -> Tuple[str, str]:
         if last_modified > newest:
             newest = last_modified
     return 'FILE', str(int(newest))
+
+class caitimer(contextlib.ContextDecorator):
+    """ This is a simple context manager that you can use like this to get timing information on functions you call:
+        with caiman.utils.utils.caitimer("CNMF fit"):
+            cnm = cnm.fit(images)
+
+        When the context exits it will say how long it was open. Useful for easy function benchmarking """
+
+    def __init__(self, msg):
+        self.message = msg
+    def __enter__(self):
+        self.start = time.time()
+        return self
+    def __exit__(self, type, value, traceback):
+        print(f"{self.message}: {time.time() - self.start}")
 

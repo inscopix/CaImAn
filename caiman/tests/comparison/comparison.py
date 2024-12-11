@@ -1,27 +1,14 @@
 #!/usr/bin/env python
+
 """ compare how the elements behave
 
 We create a folder ground truth that possess the same thing than the other
-in a form of a dictionnary containing nparrays and other info.
+in a form of a dictionary containing nparrays and other info.
 the other files contains every test and the name is the date of the test
 
-See Also
-------------
-
-Link 
-
-\image dev/kalfon/img/datacomparison.pdf
-\author: jeremie KALFON
-\date Created on Tue Jun 30 21:01:17 2015
-\copyright GNU General Public License v2.0
-\package CaImAn/comparison
 """
-#
-#\image html dev/kalfon/img/datacomparison.pdf
-#\version   1.0
-#
-#
-#
+
+#FIXME this file needs some attention
 
 import copy
 import datetime
@@ -31,16 +18,13 @@ import numpy as np
 import os
 import platform as plt
 import scipy
-from typing import Dict
 
 # Set up the logger; change this if you like.
 # You can log to a file using the filename parameter, or make the output more or less
 # verbose by setting level to logging.DEBUG, logging.INFO, logging.WARNING, or logging.ERROR
 
-logging.basicConfig(
-    format="%(relativeCreated)12d [%(filename)s:%(funcName)20s():%(lineno)s] [%(process)d] %(message)s",
-                                                                                                         # filename="/tmp/caiman.log",
-    level=logging.DEBUG)
+logger = logging.getLogger("caiman")
+logger.setLevel(logging.DEBUG)
 
 import caiman as cm
 from caiman.paths import caiman_datadir
@@ -55,7 +39,7 @@ class Comparison(object):
 
        Here it has been made for 3 different functions. for it to compare well you need to set your
        ground truth with the same computer with which you are comparing the files
-       class you instanciate to compare the different parts of CaImAn
+       class you instantiate to compare the different parts of CaImAn
 
 
 
@@ -71,7 +55,7 @@ class Comparison(object):
         C_full
         C_patch
         information
-                diffrences
+                differences
                         params_cnm
                         proc
                         param_movie
@@ -101,12 +85,12 @@ class Comparison(object):
                                 diff_timing
                                 isdifferent
                                 diff_data
-            the user to change it manualy
+            the user to change it manually
 
         Methods
         -------
         __init__()
-            Initialize the function be instanciating a comparison object
+            Initialize the function be instantiating a comparison object
 
         save(istruth)
             save the comparison object on a file
@@ -128,7 +112,7 @@ class Comparison(object):
 
     def __init__(self):
 
-        self.comparison:Dict[str, Dict] = {
+        self.comparison:dict[str, dict] = {
             'rig_shifts': {},
             'pwrig_shifts': {},
             'cnmf_on_patch': {},
@@ -157,7 +141,7 @@ class Comparison(object):
         """save the comparison as well as the images of the precision recall calculations
 
 
-            depending on if we say this file will be ground truth or not, it wil be saved in either the tests or the ground truth folder
+            depending on if we say this file will be ground truth or not, it will be saved in either the tests or the ground truth folder
             if saved in test, a comparison to groundtruth will be added to the object 
             this comparison will be on 
                 data : a normized difference of the normalized value of the arrays
@@ -169,11 +153,11 @@ class Comparison(object):
 
 
             Args:
-                self:  dictionnary
-                   the object of this class tha tcontains every value
+                self:  dictionary
+                   the object of this class that contains every value
 
                 istruth: Boolean
-                    if we want it ot be the ground truth
+                    if we want it to be the ground truth
 
                 params:
                     movie parameters
@@ -207,7 +191,7 @@ class Comparison(object):
                 """
         # getting the DATA FOR COMPARISONS
         assert (params != None and self.cnmpatch != None)
-        logging.info('we need the parameters in order to save anything\n')
+        logger.info('Parameters must be set in order to save anything\n')
         # actions on the sparse matrix
         cnm = self.cnmpatch.__dict__
         cnmpatch = deletesparse(cnm)
@@ -244,7 +228,7 @@ class Comparison(object):
             if os.path.exists(file_path):
                 os.remove(file_path)
             else:
-                logging.debug("nothing to remove\n")
+                logger.debug("nothing to remove\n")
             np.savez_compressed(file_path,
                                 information=information,
                                 A_full=self.comparison['cnmf_full_frame']['ourdata'][0],
@@ -252,7 +236,7 @@ class Comparison(object):
                                 A_patch=self.comparison['cnmf_on_patch']['ourdata'][0],
                                 C_patch=self.comparison['cnmf_on_patch']['ourdata'][1],
                                 rig_shifts=self.comparison['rig_shifts']['ourdata'])
-            logging.info('we now have ground truth\n')
+            logger.info('we now have ground truth\n')
             return
 
         else:                                                                                               # if not we create a comparison first
@@ -264,10 +248,10 @@ class Comparison(object):
                     C_full = dt['C_full'][()]
                     C_patch = dt['C_patch'][()]
                     data = dt['information'][()]
-                                                                                                            # if we cannot manage to open it or it doesnt exist:
+                                                                                                            # if we cannot manage to open it or it doesn't exist:
             except (IOError, OSError):
                                                                                                             # we save but we explain why there were a problem
-                logging.warning('we were not able to read the file ' + str(file_path) + ' to compare it\n')
+                logger.warning(f'We were not able to read the file {file_path} to compare it\n')
                 file_path = os.path.join(caiman_datadir(), "testdata", "NC" + dt + ".npz")
                 np.savez_compressed(file_path,
                                     information=information,
@@ -288,28 +272,28 @@ class Comparison(object):
             os.makedirs(dr + istr)
         information.update({'diff': {}})
         information.update({'differences': {'proc': False, 'params_movie': False, 'params_cnm': False}})
-                                                                                                            # INFORMATION FOR THE USER
+
         if data['processor'] != information['processor']:
-            logging.info("you don't have the same processor as groundtruth.. the time difference can vary"
-                         " because of that\n try recreate your own groundtruth before testing. Compare: " +
-                         str(data['processor']) + " to " + str(information['processor']) + "\n")
+            logger.info("You don't have the same processor as was used to generate the ground truth. The processing time can vary.\n" +
+                         "For time comparison, Create your own groundtruth standard for future testing.\n" +
+                         f"Compare: {data['processor']} to {information['processor']}\n")
             information['differences']['proc'] = True
         if data['params'] != information['params']:
-            logging.warning("you are not using the same movie parameters... Things can go wrong")
-            logging.warning('you must use the same parameters to compare your version of the code with '
-                            'the groundtruth one. look for the groundtruth parameters with the see() method\n')
+            logger.warning("You are not using the same movie parameters. Results will not be comparable.")
+            logger.warning('You must use the same parameters as the groundtruth.\n' +
+                            'examine the groundtruth parameters with the see() method\n')
             information['differences']['params_movie'] = True
                                                                                                             # We must cleanup some fields to permit an accurate comparison
         if not normalised_compare_cnmpatches(data['cnmpatch'], cnmpatch):
             if data['cnmpatch'].keys() != cnmpatch.keys():
-                logging.error(
+                logger.error(
                     'DIFFERENCES IN THE FIELDS OF CNMF'
                 )                                                                                           # TODO: Now that we have deeply nested data structures, find a module that gives you tight differences.
             diffkeys = [k for k in data['cnmpatch'] if data['cnmpatch'][k] != cnmpatch[k]]
             for k in diffkeys:
-                logging.info("{}:{}->{}".format(k, data['cnmpatch'][k], cnmpatch[k]))
+                logger.info(f"{k}:{data['cnmpatch'][k]}->{cnmpatch[k]}")
 
-            logging.warning('you are not using the same parameters in your cnmf on patches initialization\n')
+            logger.warning('You are not using the same parameters in your cnmf on patches initialization\n')
             information['differences']['params_cnm'] = True
 
         # for rigid
@@ -322,13 +306,6 @@ class Comparison(object):
                     timer=self.comparison['rig_shifts']['timer'] - data['timer']['rig_shifts'],
                     sensitivity=self.comparison['rig_shifts']['sensitivity'])
         })
-        #try:
-        #    pl.gcf().savefig(dr + str(i) + '/' + 'rigidcorrection.pdf')
-        #    pl.close()
-        #except:
-        #    pass
-
-        # for cnmf on patch
         information['diff'].update({
             'cnmpatch':
             cnmf(Cn=Cn,
@@ -342,12 +319,6 @@ class Comparison(object):
                  dims_gt=dims_gt,
                  timer=self.comparison['cnmf_on_patch']['timer'] - data['timer']['cnmf_on_patch'])
         })
-        #try:
-        #    pl.gcf().savefig(dr + istr + '/' + 'onpatch.pdf')
-        #    pl.close()
-        #except:
-        #    pass
-
         # CNMF FULL FRAME
         information['diff'].update({
             'cnmfull':
@@ -391,7 +362,7 @@ def see(filename=None):
 
         Args:
             self:  dictionary
-                the object of this class tha tcontains every value
+                the object of this class that tcontains every value
             filename:
                 ( just give the number or name)
 
@@ -403,7 +374,7 @@ def see(filename=None):
         dr = os.path.join(caiman_datadir(), "testdata", "groundtruth.npz")
     else:
         dr = os.path.join(caiman_datadir(), "testdata", filename, filename + ".npz")
-        logging.debug("Loading GT file " + str(dr))
+        logger.debug("Loading GT file " + str(dr))
     with np.load(dr) as dt:
         print('Info :\n')
         see_it(dt)
@@ -433,7 +404,7 @@ def deletesparse(cnm):
             val = deletesparse(val)
         if not isinstance(val, scipy.sparse.coo.coo_matrix) and not isinstance(val, np.ndarray) \
                 and not isinstance(val, scipy.sparse.csc.csc_matrix) and not keys == 'dview':
-            logging.debug(f"type of val is {type(val)}")
+            logger.debug(f"type of val is {type(val)}")
             cnm[keys] = val
         else:
 
@@ -492,7 +463,7 @@ def cnmf(Cn, A_gt, A_test, C_gt, C_test, dims_gt, dims_test, dview=None, sensiti
 
     corrs = np.array(
         [scipy.stats.pearsonr(C_gt_thr[gt, :], C_test_thr[comp, :])[0] for gt, comp in zip(idx_tp_gt, idx_tp_comp)])
-    # todo, change this test when I will have found why I have one additionnal neuron
+    # todo, change this test when I will have found why I have one additional neuron
 
     isdiff = True if ((np.linalg.norm(corrs) < sensitivity) or (performance_off_on['f1_score'] < 0.98)) else False
     info = {
@@ -513,7 +484,6 @@ def cnmf(Cn, A_gt, A_test, C_gt, C_test, dims_gt, dims_test, dview=None, sensiti
 
 
 def plotrig(init, curr, timer, sensitivity):
-
     diff = np.linalg.norm(np.asarray(init) - np.asarray(curr)) / np.linalg.norm(init)
     isdiff = diff > sensitivity
     info = {'isdifferent': int(isdiff), 'diff_data': diff, 'diff_timing': timer}
@@ -521,20 +491,6 @@ def plotrig(init, curr, timer, sensitivity):
     init = init.transpose([1, 0])
     xc = np.arange(curr.shape[1])
     xi = np.arange(init.shape[1])
-    #try:
-    #    pl.figure()
-    #    pl.subplot(1, 2, 1)
-    #    pl.plot(xc, curr[0], 'r', xi, init[0], 'b')
-    #    pl.legend(['x shifts curr', 'x shifts init'])
-    #    pl.xlabel('frames')
-    #    pl.ylabel('pixels')
-    #    pl.subplot(1, 2, 2)
-    #    pl.plot(xc, curr[1], 'r', xi, init[1], 'b')
-    #    pl.legend(['yshifts curr', 'y shifts init'])
-    #    pl.xlabel('frames')
-    #    pl.ylabel('pixels')
-    #except:
-    #    logging.warning("not able to plot")
     return info
 
 

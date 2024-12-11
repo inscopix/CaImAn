@@ -9,9 +9,9 @@ from datetime import datetime
 from dateutil.tz import tzlocal
 import h5py
 import logging
+import matplotlib.pyplot as plt
 import numpy as np
 import os
-import pylab as plt
 from pynwb import NWBHDF5IO, NWBFile
 from pynwb.ophys import TwoPhotonSeries, OpticalChannel
 from pynwb.device import Device
@@ -147,6 +147,7 @@ class timeseries(np.ndarray):
         Args:
             file_name: str
                 name of file. Possible formats are tif, avi, npz, mmap and hdf5
+                If a path is not part of the filename, it will be saved into a temporary directory under caiman_data
 
             to32: Bool
                 whether to transform to 32 bits
@@ -165,21 +166,26 @@ class timeseries(np.ndarray):
                 if saving as .tif, specifies the compression level
                 if saving as .avi or .mkv, compress=0 uses the IYUV codec, otherwise the FFV1 codec is used
 
+        Returns:
+            generated_filename: The full filename, path included, where the data was saved
+
         Raises:
             Exception 'Extension Unknown'
 
         """
+        logger = logging.getLogger("caiman")
+
         file_name = caiman.paths.fn_relocated(file_name)
         name, extension = os.path.splitext(file_name)[:2] # name is only used by the memmap saver
         extension = extension.lower()
-        logging.debug("Parsing extension " + str(extension))
+        logger.debug(f"Parsing extension {extension}")
 
         if extension in ['.tif', '.tiff', '.btf']:
             with tifffile.TiffWriter(file_name, bigtiff=bigtiff, imagej=imagej) as tif:
                 if "%4d%02d%02d" % tuple(map(int, tifffile.__version__.split('.'))) >= '20200813':
                     def foo(i):
                         if i % 200 == 0:
-                            logging.debug(str(i) + ' frames saved')
+                            logger.debug(f'{i} frames saved')
                         curfr = self[i].copy()
                         if to32 and not ('float32' in str(self.dtype)):
                             curfr = curfr.astype(np.float32)
@@ -192,11 +198,13 @@ class timeseries(np.ndarray):
                 else:
                     for i in range(self.shape[0]):
                         if i % 200 == 0:
-                            logging.debug(str(i) + ' frames saved')
+                            logger.debug(f'{i} frames saved')
                         curfr = self[i].copy()
                         if to32 and not ('float32' in str(self.dtype)):
                             curfr = curfr.astype(np.float32)
                         tif.save(curfr, compress=compress)
+            return file_name
+
         elif extension == '.npz':
             if to32 and not ('float32' in str(self.dtype)):
                 input_arr = self.astype(np.float32)
@@ -209,6 +217,8 @@ class timeseries(np.ndarray):
                      fr=self.fr,
                      meta_data=self.meta_data,
                      file_name=self.file_name)
+            return file_name
+
         elif extension in ('.avi', '.mkv'):
             codec = None
             if compress == 0:
@@ -241,6 +251,7 @@ class timeseries(np.ndarray):
             for d in data:
                 vw.write(cv2.cvtColor(d, cv2.COLOR_GRAY2BGR))
             vw.release()
+            return file_name
 
         elif extension == '.mat':
             if self.file_name[0] is not None:
@@ -271,6 +282,7 @@ class timeseries(np.ndarray):
                         'meta_data': self.meta_data,
                         'file_name': f_name
                     })
+            return file_name
 
         elif extension in ('.hdf5', '.h5'):
             with h5py.File(file_name, "w") as f:
@@ -285,10 +297,11 @@ class timeseries(np.ndarray):
                 try:
                     dset.attrs["file_name"] = [a.encode('utf8') for a in self.file_name]
                 except:
-                    logging.warning('No file saved')
+                    logger.warning('No file saved')
                 if self.meta_data[0] is not None:
-                    logging.debug("Metadata for saved file: " + str(self.meta_data))
+                    logger.debug("Metadata for saved file: " + str(self.meta_data))
                     dset.attrs["meta_data"] = cpk.dumps(self.meta_data)
+            return file_name
         elif extension == '.mmap':
             base_name = name
 
@@ -359,7 +372,7 @@ class timeseries(np.ndarray):
             return file_name
 
         else:
-            logging.error("Extension " + str(extension) + " unknown")
+            logger.error(f"Extension {extension} unknown")
             raise Exception('Extension Unknown')
 
 
@@ -371,6 +384,7 @@ def concatenate(*args, **kwargs):
         mov: XMovie object
     """
     # todo: todocument return
+    logger = logging.getLogger("caiman")
 
     frRef = None
     for arg in args:
@@ -389,6 +403,6 @@ def concatenate(*args, **kwargs):
     try:
         return obj.__class__(np.concatenate(*args, **kwargs), **obj.__dict__)
     except:
-        logging.debug('no meta information passed')
+        logger.debug('no meta information passed')
         return obj.__class__(np.concatenate(*args, **kwargs))
 

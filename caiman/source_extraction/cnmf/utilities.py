@@ -6,39 +6,23 @@ We put arrays on disk as raw bytes, extending along the first dimension.
 Alongside each array x we ensure the value x.dtype which stores the string
 description of the array's dtype.
 
-See Also:
-------------
-
-@url
-.. image::
-@author  epnev
 """
 
-# \package caiman/dource_ectraction/cnmf
-# \version   1.0
-# \copyright GNU General Public License v2.0
-# \date Created on Sat Sep 12 15:52:53 2015
-
 import cv2
-import h5py
 import logging
 import numpy as np
 import os
 import pathlib
-import pylab as pl
+import matplotlib.pyplot as plt
 import scipy
 from scipy.sparse import spdiags, issparse, csc_matrix, csr_matrix
 import scipy.ndimage as ndi
-import tifffile
-from typing import List
-# https://github.com/constantinpape/z5/issues/146
-#import z5py
 
-from .initialization import greedyROI
-from ...base.rois import com
-from ...mmapping import parallel_dot_product, load_memmap
-from ...cluster import extract_patch_coordinates
-from ...utils.stats import df_percentile
+import caiman.base.rois
+import caiman.cluster
+import caiman.mmapping
+import caiman.source_extraction.cnmf.initialization
+import caiman.utils.stats
 
 
 def get_border_type(mode):
@@ -432,7 +416,7 @@ def extract_DF_F(Yr, A, C, bl, quantileMin=8, frames_window=200, block_size=400,
             print('Using thread. If memory issues set block_size larger than 500')
             dview_res = dview
 
-        AY = parallel_dot_product(Yr, A, dview=dview_res, block_size=block_size,
+        AY = caiman.mmapping.parallel_dot_product(Yr, A, dview=dview_res, block_size=block_size,
                                   transpose=True).T
     else:
         AY = A.T.dot(Yr)
@@ -498,15 +482,16 @@ def detrend_df_f(A, b, C, f, YrA=None, quantileMin=8, frames_window=500,
         F_df:
             the computed Calcium activity to the derivative of f
     """
+    logger = logging.getLogger("caiman")
 
     if C is None:
-        logging.warning("There are no components for DF/F extraction!")
+        logger.warning("There are no components for DF/F extraction!")
         return None
     
     if b is None or f is None:
         b = np.zeros((A.shape[0], 1))
         f = np.zeros((1, C.shape[1]))
-        logging.warning("Background components not present. Results should" +
+        logger.warning("Background components not present. Results should" +
                         " not be interpreted as DF/F normalized but only" +
                         " as detrended.")
         detrend_only = True
@@ -532,7 +517,7 @@ def detrend_df_f(A, b, C, f, YrA=None, quantileMin=8, frames_window=500,
     T = C.shape[-1]
 
     if flag_auto:
-        data_prct, val = df_percentile(F[:, :frames_window], axis=1)
+        data_prct, val = caiman.utils.stats.df_percentile(F[:, :frames_window], axis=1)
         if frames_window is None or frames_window > T:
             Fd = np.stack([np.percentile(f, prctileMin) for f, prctileMin in
                            zip(F, data_prct)])
@@ -596,7 +581,7 @@ def fast_prct_filt(input_data, level=8, frames_window=1000):
     padafter = int(np.ceil(elm_missing / 2.))
     tr_tmp = np.pad(data.T, ((padbefore, padafter), (0, 0)), mode='reflect')
     numFramesNew, num_traces = np.shape(tr_tmp)
-    #% compute baseline quickly
+    # compute baseline quickly
 
     tr_BL = np.reshape(tr_tmp, (downsampfact, int(numFramesNew / downsampfact),
                                 num_traces), order='F')
@@ -612,7 +597,7 @@ def fast_prct_filt(input_data, level=8, frames_window=1000):
         data -= tr_BL[padbefore:-padafter].T
 
     return data.squeeze()
-#%%
+
 def detrend_df_f_auto(A, b, C, f, dims=None, YrA=None, use_annulus = True, 
                       dist1 = 7, dist2 = 5, frames_window=1000, 
                       use_fast = False):
@@ -688,7 +673,7 @@ def detrend_df_f_auto(A, b, C, f, dims=None, YrA=None, use_annulus = True,
     B = A_ann.T.dot(b).dot(f)
     T = C.shape[-1]
 
-    data_prct, val = df_percentile(F[:, :frames_window], axis=1)
+    data_prct, val = caiman.utils.stats.df_percentile(F[:, :frames_window], axis=1)
 
     if frames_window is None or frames_window > T:
         Fd = np.stack([np.percentile(f, prctileMin) for f, prctileMin in
@@ -714,9 +699,6 @@ def detrend_df_f_auto(A, b, C, f, dims=None, YrA=None, use_annulus = True,
         F_df = (F - Fd) / (Df + Fd)
 
     return F_df
-
-#%%
-
 
 def manually_refine_components(Y, xxx_todo_changeme, A, C, Cn, thr=0.9, display_numbers=True,
                                max_number=None, cmap=None, **kwargs):
@@ -768,8 +750,8 @@ def manually_refine_components(Y, xxx_todo_changeme, A, C, Cn, thr=0.9, display_
 
     x, y = np.mgrid[0:d1:1, 0:d2:1]
 
-    pl.imshow(Cn, interpolation=None, cmap=cmap)
-    cm = com(A, d1, d2)
+    plt.imshow(Cn, interpolation=None, cmap=cmap)
+    cm = caiman.base.rois.com(A, d1, d2)
 
     Bmat = np.zeros((np.minimum(nr, max_number), d1, d2))
     for i in range(np.minimum(nr, max_number)):
@@ -782,13 +764,13 @@ def manually_refine_components(Y, xxx_todo_changeme, A, C, Cn, thr=0.9, display_
 
     T = np.shape(Y)[-1]
 
-    pl.close()
-    fig = pl.figure()
-    ax = pl.gca()
+    plt.close()
+    fig = plt.figure()
+    ax = plt.gca()
     ax.imshow(Cn, interpolation=None, cmap=cmap,
               vmin=np.percentile(Cn[~np.isnan(Cn)], 1), vmax=np.percentile(Cn[~np.isnan(Cn)], 99))
     for i in range(np.minimum(nr, max_number)):
-        pl.contour(y, x, Bmat[i], [thr])
+        plt.contour(y, x, Bmat[i], [thr])
 
     if display_numbers:
         for i in range(np.minimum(nr, max_number)):
@@ -815,7 +797,7 @@ def manually_refine_components(Y, xxx_todo_changeme, A, C, Cn, thr=0.9, display_
             a2_tiny = np.reshape(a3_tiny, (dx_sz * dy_sz, nr), order='F')
             y2_res = y2_tiny - a2_tiny.dot(C)
             y3_res = np.reshape(y2_res, (dy_sz, dx_sz, T), order='F')
-            a__, c__, center__, b_in__, f_in__ = greedyROI(
+            a__, c__, center__, b_in__, f_in__ = caiman.source_extraction.cnmf.initialization.greedyROI(
                 y3_res, nr=1, gSig=[dx_sz//2, dy_sz//2], gSiz=[dx_sz, dy_sz])
 
             a_f = np.zeros((d, 1))
@@ -831,8 +813,8 @@ def manually_refine_components(Y, xxx_todo_changeme, A, C, Cn, thr=0.9, display_
             Bvec = np.zeros(d)
             Bvec[indx] = cumEn
             bmat = np.reshape(Bvec, np.shape(Cn), order='F')
-            pl.contour(y, x, bmat, [thr])
-            pl.pause(.01)
+            plt.contour(y, x, bmat, [thr])
+            plt.pause(.01)
 
         elif pts == []:
             break
@@ -1011,7 +993,7 @@ def update_order_greedy(A, flag_AA=True):
         Eftychios A. Pnevmatikakis, Simons Foundation, 2017
     """
     K = np.shape(A)[-1]
-    parllcomp:List = []
+    parllcomp:list = []
     for i in range(K):
         new_list = True
         for ls in parllcomp:
@@ -1030,8 +1012,6 @@ def update_order_greedy(A, flag_AA=True):
             parllcomp.append([i])
     len_parrllcomp = [len(ls) for ls in parllcomp]
     return parllcomp, len_parrllcomp
-#%%
-
 
 def compute_residuals(Yr_mmap_file, A_, b_, C_, f_, dview=None, block_size=1000, num_blocks_per_run=5):
     '''compute residuals from memory mapped file and output of CNMF
@@ -1043,7 +1023,7 @@ def compute_residuals(Yr_mmap_file, A_, b_, C_, f_, dview=None, block_size=1000,
                 number of pixels processed together
 
             num_blocks_per_run: int
-                nnumber of parallel blocks processes
+                number of parallel blocks processes
 
         Returns:
             YrA: ndarray
@@ -1059,7 +1039,7 @@ def compute_residuals(Yr_mmap_file, A_, b_, C_, f_, dview=None, block_size=1000,
     nA = np.ravel(Ab.power(2).sum(axis=0))
 
     if 'mmap' in str(type(Yr_mmap_file)):
-        YA = parallel_dot_product(Yr_mmap_file, Ab, dview=dview, block_size=block_size,
+        YA = caiman.mmapping.parallel_dot_product(Yr_mmap_file, Ab, dview=dview, block_size=block_size,
                                   transpose=True, num_blocks_per_run=num_blocks_per_run) * \
                                   scipy.sparse.spdiags(1./nA, 0, Ab.shape[-1], Ab.shape[-1])
     else:
@@ -1228,11 +1208,17 @@ def get_file_size(file_name, var_name_hdf5='mov'):
                 elif info['channels'] == 3:
                     info['nChan'] = 1
                     factor = 2
-            
+
                 # Determine number of frames in whole file
                 T = int(os.path.getsize(
                     file_name[:-4] + '.sbx') / info['recordsPerBuffer'] / info['sz'][1] * factor / 4 - 1)
-                
+
+            elif extension in ('.isxd'):
+                import isx
+                info = isx.Movie.read(file_name)
+                dims = info.spacing.num_pixels
+                T = info.timing.num_samples
+
             else:
                 raise Exception('Unknown file type')
             dims = tuple(dims)
@@ -1313,13 +1299,13 @@ def fast_graph_Laplacian(mmap_file, dims, max_radius=10, kernel='heat',
         else:
             res = dview.map(fast_graph_Laplacian_pixel, pars, chunksize=128)
         indptr = np.cumsum(np.array([0] + [len(r[0]) for r in res]))
-        indeces = [item for sublist in res for item in sublist[0]]
+        indices = [item for sublist in res for item in sublist[0]]
         data = [item for sublist in res for item in sublist[1]]
-        W = scipy.sparse.csr_matrix((data, indeces, indptr), shape=[Np, Np])
+        W = scipy.sparse.csr_matrix((data, indices, indptr), shape=[Np, Np])
         D = scipy.sparse.spdiags(W.sum(0), 0, Np, Np)
         L = D - W
     else:
-        indices, _ = extract_patch_coordinates(dims, rf, strides)
+        indices, _ = caiman.cluster.extract_patch_coordinates(dims, rf, strides)
         pars = []
         for i in range(len(indices)):
             pars.append([mmap_file, indices[i], kernel, sigma, thr, p,
@@ -1342,7 +1328,7 @@ def fast_graph_Laplacian_patches(pars):
     if type(mmap_file) not in {'str', 'list'}:
         Yind = mmap_file
     else:
-        Y = load_memmap(mmap_file)[0]
+        Y = caiman.mmapping.load_memmap(mmap_file)[0]
         Yind = np.array(Y[indices])
     if normalize:
         Yind -= Yind.mean(1)[:, np.newaxis]
@@ -1374,9 +1360,9 @@ def fast_graph_Laplacian_pixel(pars):
     [XX, YY] = np.meshgrid(xx, yy)
     R = np.sqrt(XX**2 + YY**2)
     R = R.flatten('F')
-    indeces = np.where(R < max_radius)[0]
-    Y = load_memmap(mmap_file)[0]
-    Yind = np.array(Y[indeces])
+    indices = np.where(R < max_radius)[0]
+    Y = caiman.mmapping.load_memmap(mmap_file)[0]
+    Yind = np.array(Y[indices])
     y = np.array(Y[i, :])
     if normalize:
         Yind -= Yind.mean(1)[:, np.newaxis]
@@ -1397,4 +1383,4 @@ def fast_graph_Laplacian_pixel(pars):
     else:
         ind = np.where(w>0)[0]
 
-    return indeces[ind].tolist(), w[ind].tolist()
+    return indices[ind].tolist(), w[ind].tolist()
