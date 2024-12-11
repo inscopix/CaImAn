@@ -30,8 +30,8 @@ import warnings
 import zarr
 from zipfile import ZipFile
 
-import caiman.base.timeseries
-import caiman.base.traces
+import caiman.base.timeseries as cmts
+import caiman.base.traces as cmtr
 import caiman.mmapping
 import caiman.summary_images
 import caiman.utils.sbx_utils
@@ -42,7 +42,7 @@ try:
 except:
     pass
 
-class movie(caiman.base.timeseries.timeseries):
+class movie(cmts.timeseries):
     """
     Class representing a movie. This class subclasses timeseries,
     that in turn subclasses ndarray
@@ -895,7 +895,7 @@ class movie(caiman.base.timeseries.timeseries):
         fovs = cv2.resize(np.uint8(fovs), (w1, h1), 1. / fx, 1. / fy, interpolation=cv2.INTER_NEAREST)
         return np.uint8(fovs), mcoef, distanceMatrix
 
-    def extract_traces_from_masks(self, masks: np.ndarray) -> caiman.base.traces.trace:
+    def extract_traces_from_masks(self, masks: np.ndarray) -> cmtr.trace:
         """
         Args:
             masks: array, 3D with each 2D slice bein a mask (integer or fractional)
@@ -914,7 +914,7 @@ class movie(caiman.base.timeseries.timeseries):
 
         pixelsA = np.sum(A, axis=1)
         A = A / pixelsA[:, None]       # obtain average over ROI
-        traces = caiman.base.traces.trace(np.dot(A, np.transpose(Y)).T, **self.__dict__)
+        traces = cmtr.trace(np.dot(A, np.transpose(Y)).T, **self.__dict__)
         return traces
 
     def resize(self, fx=1, fy=1, fz=1, interpolation=cv2.INTER_AREA):
@@ -954,7 +954,7 @@ class movie(caiman.base.timeseries.timeseries):
                 if len(new_m) == 0:
                     new_m = m_tmp
                 else:
-                    new_m = caiman.base.timeseries.concatenate([new_m, m_tmp], axis=0)
+                    new_m = cmts.concatenate([new_m, m_tmp], axis=0)
 
             return new_m
         else:
@@ -1624,7 +1624,7 @@ def load_movie_chain(file_list: list[str],
             m = m[:, top:h - bottom, left:w - right, z_top:d - z_bottom]
 
         mov.append(m)
-    return caiman.base.timeseries.concatenate(mov, axis=0)
+    return cmts.concatenate(mov, axis=0)
 
 ####
 # This is only used for demo_behavior, and used to be part of caiman.load(), activated with the
