@@ -312,6 +312,7 @@ def register_ROIs(A1,
                   D=None,
                   max_thr=0,
                   use_opt_flow=True,
+                  max_shifts=10,
                   thresh_cost=.7,
                   max_dist=10,
                   enclosed_thr=None,
@@ -350,6 +351,9 @@ def register_ROIs(A1,
 
         use_opt_flow: bool
             use dense optical flow to align templates
+
+        max_shifts: scalar
+            similar to max_shifts in NoRMCorre, when use_opt_flow is set to False
 
         thresh_cost: scalar
             maximum distance considered
@@ -414,17 +418,29 @@ def register_ROIs(A1,
         if use_opt_flow:
             template1_norm = np.uint8(template1 * (template1 > 0) * 255)
             template2_norm = np.uint8(template2 * (template2 > 0) * 255)
-            flow = cv2.calcOpticalFlowFarneback(np.uint8(template1_norm * 255), np.uint8(template2_norm * 255), None,
-                                                0.5, 3, 128, 3, 7, 1.5, 0)
+            flow = cv2.calcOpticalFlowFarneback(prev=np.uint8(template1_norm * 255),
+                                                next=np.uint8(template2_norm * 255),
+                                                flow=None,
+                                                pyr_scale=.5,
+                                                levels=3,
+                                                winsize=128,
+                                                iterations=3,
+                                                poly_n=7,
+                                                poly_sigma=1.5,
+                                                flags=0,
+                                                )
             x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
             y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
 
         else:
-            template2, shifts, _, xy_grid = tile_and_correct(template2,
-                                                             template1 - template1.min(),
-                                                             [int(dims[0] / 4), int(dims[1] / 4)], [16, 16], [10, 10],
-                                                             add_to_movie=template2.min(),
-                                                             shifts_opencv=True)
+            template2, shifts, _, xy_grid = tile_and_correct(img=template2,
+                                                             template=template1,
+                                                             strides=[int(dims[0] / 4), int(dims[1] / 4)],
+                                                             overlaps=[16, 16],
+                                                             max_shifts=[max_shifts, max_shifts],
+                                                             add_to_movie=0,
+                                                             shifts_opencv=False,
+                                                            )
 
             dims_grid = tuple(np.max(np.stack(xy_grid, axis=0), axis=0) - np.min(np.stack(xy_grid, axis=0), axis=0) + 1)
             _sh_ = np.stack(shifts, axis=0)
@@ -451,7 +467,7 @@ def register_ROIs(A1,
         cm_2 = com(A2, *dims)
         A1_tr = (A1 > 0).astype(float)
         A2_tr = (A2 > 0).astype(float)
-        D = distance_masks([A1_tr, A2_tr], [cm_1, cm_2], max_dist, enclosed_thr=enclosed_thr)
+        D, D_cm = distance_masks([A1_tr, A2_tr], [cm_1, cm_2], max_dist, enclosed_thr=enclosed_thr)
 
     matches, costs = find_matches(D, print_assignment=print_assignment)
     matches = matches[0]
@@ -518,7 +534,7 @@ def register_ROIs(A1,
         pl.title('Mismatches')
         pl.axis('off')
 
-    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2
+    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2, D, D_cm
 
 
 def register_multisession(A,
@@ -527,6 +543,7 @@ def register_multisession(A,
                           align_flag=True,
                           max_thr=0,
                           use_opt_flow=True,
+                          max_shifts=10,
                           thresh_cost=.7,
                           max_dist=10,
                           enclosed_thr=None):
@@ -554,6 +571,9 @@ def register_multisession(A,
 
         use_opt_flow: bool
             use dense optical flow to align templates
+        
+        max_shifts: scalar
+            similar to max_shifts in NoRMCorre, when use_opt_flow is set to False
 
         thresh_cost: scalar
             maximum distance considered
@@ -603,11 +623,12 @@ def register_multisession(A,
                                     align_flag=align_flag,
                                     max_thr=max_thr,
                                     use_opt_flow=use_opt_flow,
+                                    max_shifts=max_shifts,
                                     thresh_cost=thresh_cost,
                                     max_dist=max_dist,
                                     enclosed_thr=enclosed_thr)
 
-        mat_sess, mat_un, nm_sess, nm_un, _, A2 = reg_results
+        mat_sess, mat_un, nm_sess, nm_un, _, A2, D, D_cm = reg_results
         logger.info(len(mat_sess))
         A_union = A2.copy()
         A_union[:, mat_un] = A[sess][:, mat_sess]
@@ -621,7 +642,7 @@ def register_multisession(A,
     for sess in range(n_sessions):
         assignments[matchings[sess], sess] = range(len(matchings[sess]))
 
-    return A_union, assignments, matchings
+    return A_union, assignments, matchings, A2, D, D_cm
 
 
 def extract_active_components(assignments, indices, only=True):
@@ -698,6 +719,7 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
 
     """
     D_s = []
+    D_cm_s = []
 
     for gt_comp, test_comp, cmgt_comp, cmtest_comp in zip(M_s[:-1], M_s[1:], cm_s[:-1], cm_s[1:]):
 
@@ -710,6 +732,7 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
         nb_gt = np.shape(gt_comp)[-1]
         nb_test = np.shape(test_comp)[-1]
         D = np.ones((nb_gt, nb_test))
+        D_cm = np.ones_like(D)
 
         cmgt_comp = np.array(cmgt_comp)
         cmtest_comp = np.array(cmtest_comp)
@@ -722,6 +745,7 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
             for j in range(nb_test):   # for each components on the tests
                 dist = np.linalg.norm(cmgt_comp[i] - cmtest_comp[j])
                                        # we compute the distance of this one to the other ones
+                D_cm[i, j] = dist
                 if dist < max_dist:
                                        # union matrix of the i-th neuron to the jth one
                     union = k[:, j].sum()
@@ -751,7 +775,8 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
                     D[i, j] = 1
 
         D_s.append(D)
-    return D_s
+        D_cm_s.append(D_cm)
+    return D_s, D_cm_s
 
 
 def find_matches(D_s, print_assignment: bool = False) -> tuple[list, list]:
