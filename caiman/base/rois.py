@@ -534,7 +534,7 @@ def register_ROIs(A1,
         pl.title('Mismatches')
         pl.axis('off')
 
-    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, D, D_cm, A2
+    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2, D, D_cm
 
 
 def register_multisession(A,
