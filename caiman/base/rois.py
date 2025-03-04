@@ -396,6 +396,12 @@ def register_ROIs(A1,
         A2: csc_matrix  # pixels x # of components
             ROIs from session 2 aligned to session 1
 
+        D: list
+            list of cost matrices
+
+        D_cm: list
+            list of Euclidean distance matrices
+
     """
     logger = logging.getLogger("caiman")
 
@@ -614,6 +620,8 @@ def register_multisession(A,
     matchings = []
     matchings.append(list(range(A_union.shape[-1])))
 
+    D = []
+    D_cm = []
     for sess in range(1, n_sessions):
         reg_results = register_ROIs(A[sess],
                                     A_union,
@@ -628,7 +636,7 @@ def register_multisession(A,
                                     max_dist=max_dist,
                                     enclosed_thr=enclosed_thr)
 
-        mat_sess, mat_un, nm_sess, nm_un, _, A2, D, D_cm = reg_results
+        mat_sess, mat_un, nm_sess, nm_un, _, A2, d, d_cm = reg_results
         logger.info(len(mat_sess))
         A_union = A2.copy()
         A_union[:, mat_un] = A[sess][:, mat_sess]
@@ -637,6 +645,8 @@ def register_multisession(A,
         new_match[mat_sess] = mat_un
         new_match[nm_sess] = range(A2.shape[-1], A_union.shape[-1])
         matchings.append(new_match.tolist())
+        D.append(d)
+        D_cm.append(d_cm)
 
     assignments = np.empty((A_union.shape[-1], n_sessions)) * np.nan
     for sess in range(n_sessions):
@@ -712,7 +722,9 @@ def distance_masks(M_s:list, cm_s: list[list], max_dist: float, enclosed_thr: Op
             if not None set distance to at most the specified value when ground truth is a subset of inferred
 
     Returns:
-        D_s: list of matrix distances
+        D_s: list of cost matrices
+
+        D_cm_s: list of Euclidean distance matrices
 
     Raises:
         Exception: 'Nan value produced. Error in inputs'
