@@ -437,16 +437,21 @@ def register_ROIs(A1,
                                                 )
             x_remap = (flow[:, :, 0] + x_grid).astype(np.float32)
             y_remap = (flow[:, :, 1] + y_grid).astype(np.float32)
+            template2 = cv2.remap(template2.astype(np.float32), x_remap, y_remap, cv2.INTER_NEAREST)
+            shifts = flow
 
         else:
-            template2, shifts, _, xy_grid = tile_and_correct(img=template2,
-                                                             template=template1,
-                                                             strides=[int(dims[0] / 4), int(dims[1] / 4)],
-                                                             overlaps=[16, 16],
-                                                             max_shifts=[max_shifts, max_shifts],
-                                                             add_to_movie=0,
-                                                             shifts_opencv=False,
-                                                            )
+            strides = int(np.min(dims) / 4)
+            overlaps = int(np.max((max_shifts * 2, strides / 4)))
+            template2, shifts, _, xy_grid = tile_and_correct(
+                img=template2,
+                template=template1,
+                strides=[strides, strides],
+                overlaps=[overlaps, overlaps],
+                max_shifts=[max_shifts, max_shifts],
+                add_to_movie=0,
+                shifts_opencv=False,
+            )
 
             dims_grid = tuple(np.max(np.stack(xy_grid, axis=0), axis=0) - np.min(np.stack(xy_grid, axis=0), axis=0) + 1)
             _sh_ = np.stack(shifts, axis=0)
@@ -540,7 +545,7 @@ def register_ROIs(A1,
         pl.title('Mismatches')
         pl.axis('off')
 
-    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2, D, D_cm
+    return matched_ROIs1, matched_ROIs2, non_matched1, non_matched2, performance, A2, D, D_cm, template2, shifts
 
 
 def register_multisession(A,
@@ -622,6 +627,8 @@ def register_multisession(A,
 
     D = []
     D_cm = []
+    aligned_templates = []
+    xy_shifts = []
     for sess in range(1, n_sessions):
         reg_results = register_ROIs(A[sess],
                                     A_union,
@@ -636,7 +643,7 @@ def register_multisession(A,
                                     max_dist=max_dist,
                                     enclosed_thr=enclosed_thr)
 
-        mat_sess, mat_un, nm_sess, nm_un, _, A2, d, d_cm = reg_results
+        mat_sess, mat_un, nm_sess, nm_un, _, A2, d, d_cm, aligned_template, xy_shifts_sess = reg_results
         logger.info(len(mat_sess))
         A_union = A2.copy()
         A_union[:, mat_un] = A[sess][:, mat_sess]
@@ -647,12 +654,14 @@ def register_multisession(A,
         matchings.append(new_match.tolist())
         D.append(d)
         D_cm.append(d_cm)
+        aligned_templates.append(aligned_template)
+        xy_shifts.append(xy_shifts_sess)
 
     assignments = np.empty((A_union.shape[-1], n_sessions)) * np.nan
     for sess in range(n_sessions):
         assignments[matchings[sess], sess] = range(len(matchings[sess]))
 
-    return A_union, assignments, matchings, A2, D, D_cm
+    return A_union, assignments, matchings, A2, D, D_cm, aligned_templates, xy_shifts
 
 
 def extract_active_components(assignments, indices, only=True):
